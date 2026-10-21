@@ -1,0 +1,88 @@
+﻿@model GamingTournament.Models.Team
+
+@{
+    ViewData["Title"] = "Създаване на отбор";
+}
+
+<h1>Създаване на отбор</h1>
+
+<p class="text-muted">
+    Треньорът ще бъде добавен по-късно чрез одобрена
+    заявка за треньор.
+</p>
+
+<hr />
+
+<div class="row">
+    <div class="col-md-6">
+
+        <form asp-controller="Teams"
+              asp-action="Create"
+              method="post">
+
+            <div asp-validation-summary="ModelOnly"
+                 class="text-danger">
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Name"
+                       class="form-label">
+                    Име на отбора
+                </label>
+
+                <input asp-for="Name"
+                       class="form-control" />
+
+                <span asp-validation-for="Name"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Country"
+                       class="form-label">
+                    Държава
+                </label>
+
+                <input asp-for="Country"
+                       class="form-control" />
+
+                <span asp-validation-for="Country"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="FoundedYear"
+                       class="form-label">
+                    Година на основаване
+                </label>
+
+                <input asp-for="FoundedYear"
+                       class="form-control" />
+
+                <span asp-validation-for="FoundedYear"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <button type="submit"
+                    class="btn btn-success">
+                Създай
+            </button>
+
+            <a asp-controller="Teams"
+               asp-action="Index"
+               class="btn btn-secondary">
+                Назад
+            </a>
+
+        </form>
+
+    </div>
+</div>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}

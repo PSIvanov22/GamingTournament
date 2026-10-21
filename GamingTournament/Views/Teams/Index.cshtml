@@ -1,0 +1,187 @@
+﻿@model List<GamingTournament.Models.Team>
+
+@{
+    ViewData["Title"] = "Отбори";
+
+    HashSet<int> requestedTeamIds =
+        ViewBag.RequestedTeamIds as HashSet<int>
+        ?? new HashSet<int>();
+
+    int? currentTeamId =
+        ViewBag.CurrentTeamId as int?;
+}
+
+<h1>Отбори</h1>
+
+@if (TempData["SuccessMessage"] != null)
+{
+    <div class="alert alert-success">
+        @TempData["SuccessMessage"]
+    </div>
+}
+
+@if (TempData["ErrorMessage"] != null)
+{
+    <div class="alert alert-danger">
+        @TempData["ErrorMessage"]
+    </div>
+}
+
+@if (User.IsInRole("Admin"))
+{
+    <p>
+        <a asp-controller="Teams"
+           asp-action="Create"
+           class="btn btn-primary">
+            Създай нов отбор
+        </a>
+
+        <a asp-controller="Teams"
+           asp-action="Requests"
+           class="btn btn-warning">
+            Заявки за играчи
+        </a>
+    </p>
+}
+
+@if (Model.Count == 0)
+{
+    <div class="alert alert-info">
+        Все още няма създадени отбори.
+    </div>
+}
+else
+{
+    <table class="table table-bordered table-striped">
+        <thead>
+        <tr>
+            <th>Име</th>
+            <th>Държава</th>
+            <th>Година</th>
+            <th>Треньор</th>
+            <th>Играчи</th>
+            <th>Действия</th>
+        </tr>
+        </thead>
+
+        <tbody>
+        @foreach (var team in Model)
+        {
+            <tr>
+                <td>
+                    <strong>@team.Name</strong>
+                </td>
+
+                <td>
+                    @(string.IsNullOrWhiteSpace(team.Country)
+                        ? "Няма информация"
+                        : team.Country)
+                </td>
+
+                <td>
+                    @(team.FoundedYear?.ToString()
+                        ?? "Няма информация")
+                </td>
+
+                <td>
+                    @if (team.Coach == null)
+                    {
+                        <span class="text-muted">
+                            Няма одобрен треньор
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-primary">
+                            Треньор: @team.Coach.Email
+                        </span>
+                    }
+                </td>
+
+                <td>
+                    @team.Members.Count
+                </td>
+
+                <td>
+                    @if (User.IsInRole("Admin"))
+                    {
+                        <span class="text-muted">
+                            Администратор
+                        </span>
+                    }
+                    else if (User.Identity != null &&
+                             User.Identity.IsAuthenticated)
+                    {
+                        <div class="d-flex flex-column gap-2">
+
+                            @if (currentTeamId == team.Id)
+                            {
+                                <span class="badge bg-success">
+                                    Твоят отбор
+                                </span>
+                            }
+                            else if (currentTeamId != null)
+                            {
+                                <span class="text-muted">
+                                    Вече си играч в отбор
+                                </span>
+                            }
+                            else if (requestedTeamIds.Contains(team.Id))
+                            {
+                                <span class="badge bg-warning text-dark">
+                                    Заявката за играч чака одобрение
+                                </span>
+                            }
+                            else
+                            {
+                                <form asp-controller="Teams"
+                                      asp-action="Apply"
+                                      method="post">
+
+                                    <input type="hidden"
+                                           name="teamId"
+                                           value="@team.Id" />
+
+                                    <button type="submit"
+                                            class="btn btn-success btn-sm">
+                                        Кандидатствай като играч
+                                    </button>
+                                </form>
+                            }
+
+                            @if (team.Coach == null)
+                            {
+                                <button type="button"
+                                        class="btn btn-primary btn-sm"
+                                        disabled>
+                                    Кандидатствай за треньор
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="text-muted">
+                                    Отборът вече има треньор
+                                </span>
+                            }
+
+                        </div>
+                    }
+                    else
+                    {
+                        <a asp-area="Identity"
+                           asp-page="/Account/Login"
+                           class="btn btn-outline-primary btn-sm">
+                            Влез, за да кандидатстваш
+                        </a>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+<p class="text-muted">
+    Бутонът за кандидатстване за треньор ще стане
+    активен след създаването на заявките в базата.
+</p>
