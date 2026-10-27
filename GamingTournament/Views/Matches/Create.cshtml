@@ -1,0 +1,85 @@
+@model GamingTournament.Models.MatchCreateViewModel
+
+@{
+    ViewData["Title"] = "Създаване на мач";
+}
+
+<h1>Създаване на мач</h1>
+
+<hr />
+
+<div class="row">
+    <div class="col-md-6">
+
+        <form asp-controller="Matches"
+              asp-action="Create"
+              method="post">
+
+            <div asp-validation-summary="ModelOnly"
+                 class="text-danger">
+            </div>
+
+            @* ViewBag.Teams is a SelectList built in the controller *@
+            <div class="mb-3">
+                <label asp-for="HomeTeamId"
+                       class="form-label"></label>
+
+                <select asp-for="HomeTeamId"
+                        asp-items="ViewBag.Teams"
+                        class="form-select">
+                    <option value="">-- избери --</option>
+                </select>
+
+                <span asp-validation-for="HomeTeamId"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="AwayTeamId"
+                       class="form-label"></label>
+
+                <select asp-for="AwayTeamId"
+                        asp-items="ViewBag.Teams"
+                        class="form-select">
+                    <option value="">-- избери --</option>
+                </select>
+
+                <span asp-validation-for="AwayTeamId"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="ScheduledOn"
+                       class="form-label"></label>
+
+                @* DateTime? renders as <input type="datetime-local"> *@
+                <input asp-for="ScheduledOn"
+                       class="form-control" />
+
+                <span asp-validation-for="ScheduledOn"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <button type="submit"
+                    class="btn btn-success">
+                Създай
+            </button>
+
+            <a asp-controller="Matches"
+               asp-action="Index"
+               class="btn btn-secondary">
+                Назад
+            </a>
+
+        </form>
+
+    </div>
+</div>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}

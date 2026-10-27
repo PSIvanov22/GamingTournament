@@ -1,0 +1,76 @@
+@model GamingTournament.Models.MatchResultViewModel
+
+@{
+    ViewData["Title"] = "Резултат от мач";
+}
+
+<h1>Резултат от мач</h1>
+
+<p class="lead">
+    @Model.HomeTeamName срещу @Model.AwayTeamName
+</p>
+
+<hr />
+
+<div class="row">
+    <div class="col-md-6">
+
+        <form asp-controller="Matches"
+              asp-action="Result"
+              method="post">
+
+            @* only the id travels back, team names are reloaded *@
+            <input type="hidden" asp-for="Id" />
+
+            <div class="mb-3">
+                <label asp-for="HomeScore"
+                       class="form-label">
+                    @Model.HomeTeamName
+                </label>
+
+                <input asp-for="HomeScore"
+                       class="form-control"
+                       min="0"
+                       max="999" />
+
+                <span asp-validation-for="HomeScore"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="AwayScore"
+                       class="form-label">
+                    @Model.AwayTeamName
+                </label>
+
+                <input asp-for="AwayScore"
+                       class="form-control"
+                       min="0"
+                       max="999" />
+
+                <span asp-validation-for="AwayScore"
+                      class="text-danger">
+                </span>
+            </div>
+
+            <button type="submit"
+                    class="btn btn-success">
+                Запиши
+            </button>
+
+            <a asp-controller="Matches"
+               asp-action="Index"
+               class="btn btn-secondary">
+                Назад
+            </a>
+
+        </form>
+
+    </div>
+</div>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}

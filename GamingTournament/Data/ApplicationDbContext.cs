@@ -27,6 +27,8 @@ public class ApplicationDbContext
         set;
     } = null!;
 
+    public DbSet<Match> Matches { get; set; } = null!;
+
     protected override void OnModelCreating(
         ModelBuilder builder)
     {
@@ -71,5 +73,34 @@ public class ApplicationDbContext
             .WithMany(team => team.CoachRequests)
             .HasForeignKey(request => request.TeamId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Matches
+        // Match -> Teams twice, so EF can't guess on its own
+        // which FK belongs to which navigation - spell it out.
+        // Restrict: deleting a team must not silently wipe
+        // its match history
+        builder.Entity<Match>()
+            .HasOne(match => match.HomeTeam)
+            .WithMany()
+            .HasForeignKey(match => match.HomeTeamId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<Match>()
+            .HasOne(match => match.AwayTeam)
+            .WithMany()
+            .HasForeignKey(match => match.AwayTeamId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // store "Scheduled" instead of 0 - readable in the DB
+        builder.Entity<Match>()
+            .Property(match => match.Status)
+            .HasConversion<string>()
+            .HasMaxLength(20);
+
+        // second line of defence, the controller checks this too
+        builder.Entity<Match>()
+            .ToTable(table => table.HasCheckConstraint(
+                "CK_Matches_DifferentTeams",
+                "HomeTeamId <> AwayTeamId"));
     }
 }

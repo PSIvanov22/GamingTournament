@@ -1,0 +1,157 @@
+@model List<GamingTournament.Models.Match>
+
+@{
+    ViewData["Title"] = "Мачове";
+}
+
+<h1>Мачове</h1>
+
+@if (TempData["SuccessMessage"] != null)
+{
+    <div class="alert alert-success">
+        @TempData["SuccessMessage"]
+    </div>
+}
+
+@if (TempData["ErrorMessage"] != null)
+{
+    <div class="alert alert-danger">
+        @TempData["ErrorMessage"]
+    </div>
+}
+
+@if (User.IsInRole("Admin"))
+{
+    <p>
+        <a asp-controller="Matches"
+           asp-action="Create"
+           class="btn btn-primary">
+            Създай нов мач
+        </a>
+    </p>
+}
+
+@if (Model.Count == 0)
+{
+    <div class="alert alert-info">
+        Все още няма създадени мачове.
+    </div>
+}
+else
+{
+    <table class="table table-bordered table-striped">
+        <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Домакин</th>
+            <th>Резултат</th>
+            <th>Гост</th>
+            <th>Статус</th>
+            @if (User.IsInRole("Admin"))
+            {
+                <th>Действия</th>
+            }
+        </tr>
+        </thead>
+
+        <tbody>
+        @foreach (var match in Model)
+        {
+            <tr>
+                <td>
+                    @match.ScheduledOn.ToString("dd.MM.yyyy HH:mm")
+                </td>
+
+                @* winner in bold *@
+                <td>
+                    @if (match.WinnerTeamId == match.HomeTeamId)
+                    {
+                        <strong>@match.HomeTeam?.Name</strong>
+                    }
+                    else
+                    {
+                        @match.HomeTeam?.Name
+                    }
+                </td>
+
+                <td class="text-center">
+                    @if (match.Status == MatchStatus.Finished)
+                    {
+                        <span>@match.HomeScore : @match.AwayScore</span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">- : -</span>
+                    }
+                </td>
+
+                <td>
+                    @if (match.WinnerTeamId == match.AwayTeamId)
+                    {
+                        <strong>@match.AwayTeam?.Name</strong>
+                    }
+                    else
+                    {
+                        @match.AwayTeam?.Name
+                    }
+                </td>
+
+                <td>
+                    @switch (match.Status)
+                    {
+                        case MatchStatus.Scheduled:
+                            <span class="badge bg-primary">Предстоящ</span>
+                            break;
+
+                        case MatchStatus.Finished:
+                            if (match.WinnerTeamId == null)
+                            {
+                                <span class="badge bg-secondary">Равен</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-success">Приключил</span>
+                            }
+                            break;
+
+                        case MatchStatus.Cancelled:
+                            <span class="badge bg-danger">Отменен</span>
+                            break;
+                    }
+                </td>
+
+                @if (User.IsInRole("Admin"))
+                {
+                    <td>
+                        @if (match.Status == MatchStatus.Scheduled)
+                        {
+                            <div class="d-flex gap-2">
+                                <a asp-controller="Matches"
+                                   asp-action="Result"
+                                   asp-route-id="@match.Id"
+                                   class="btn btn-success btn-sm">
+                                    Въведи резултат
+                                </a>
+
+                                <form asp-controller="Matches"
+                                      asp-action="Cancel"
+                                      method="post">
+
+                                    <input type="hidden"
+                                           name="id"
+                                           value="@match.Id" />
+
+                                    <button type="submit"
+                                            class="btn btn-danger btn-sm">
+                                        Отмени
+                                    </button>
+                                </form>
+                            </div>
+                        }
+                    </td>
+                }
+            </tr>
+        }
+        </tbody>
+    </table>
+}

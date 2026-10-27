@@ -115,6 +115,44 @@ namespace GamingTournament.Data.Migrations
                     b.ToTable("CoachRequests");
                 });
 
+            modelBuilder.Entity("GamingTournament.Models.Match", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AwayScore")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AwayTeamId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("HomeScore")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("HomeTeamId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("ScheduledOn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AwayTeamId");
+
+                    b.HasIndex("HomeTeamId");
+
+                    b.ToTable("Matches", t =>
+                        {
+                            t.HasCheckConstraint("CK_Matches_DifferentTeams", "HomeTeamId <> AwayTeamId");
+                        });
+                });
+
             modelBuilder.Entity("GamingTournament.Models.Team", b =>
                 {
                     b.Property<int>("Id")
@@ -332,6 +370,25 @@ namespace GamingTournament.Data.Migrations
                     b.Navigation("Player");
 
                     b.Navigation("Team");
+                });
+
+            modelBuilder.Entity("GamingTournament.Models.Match", b =>
+                {
+                    b.HasOne("GamingTournament.Models.Team", "AwayTeam")
+                        .WithMany()
+                        .HasForeignKey("AwayTeamId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GamingTournament.Models.Team", "HomeTeam")
+                        .WithMany()
+                        .HasForeignKey("HomeTeamId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AwayTeam");
+
+                    b.Navigation("HomeTeam");
                 });
 
             modelBuilder.Entity("GamingTournament.Models.Team", b =>
