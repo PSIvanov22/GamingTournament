@@ -37,6 +37,15 @@ using (IServiceScope scope = app.Services.CreateScope())
 {
     IServiceProvider services = scope.ServiceProvider;
 
+    // Създава базата и прилага всички миграции,
+    // ако още не са приложени
+    ApplicationDbContext context =
+        services.GetRequiredService<
+            ApplicationDbContext
+        >();
+
+    await context.Database.MigrateAsync();
+
     RoleManager<IdentityRole> roleManager =
         services.GetRequiredService<
             RoleManager<IdentityRole>
@@ -47,10 +56,11 @@ using (IServiceScope scope = app.Services.CreateScope())
             UserManager<ApplicationUser>
         >();
 
+    // Играч е всеки влязъл потребител, който не е Admin,
+    // затова роля "Player" не е нужна
     string[] roles =
     {
-        "Admin",
-        "Player"
+        "Admin"
     };
 
     foreach (string role in roles)
@@ -112,31 +122,6 @@ using (IServiceScope scope = app.Services.CreateScope())
         }
     }
 
-    List<ApplicationUser> users =
-        await userManager.Users.ToListAsync();
-
-    foreach (ApplicationUser user in users)
-    {
-        bool isAdmin =
-            await userManager.IsInRoleAsync(
-                user,
-                "Admin"
-            );
-
-        bool isPlayer =
-            await userManager.IsInRoleAsync(
-                user,
-                "Player"
-            );
-
-        if (!isAdmin && !isPlayer)
-        {
-            await userManager.AddToRoleAsync(
-                user,
-                "Player"
-            );
-        }
-    }
 }
 
 if (!app.Environment.IsDevelopment())

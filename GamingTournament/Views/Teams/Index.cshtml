@@ -7,8 +7,18 @@
         ViewBag.RequestedTeamIds as HashSet<int>
         ?? new HashSet<int>();
 
+    HashSet<int> requestedCoachTeamIds =
+        ViewBag.RequestedCoachTeamIds as HashSet<int>
+        ?? new HashSet<int>();
+
     int? currentTeamId =
         ViewBag.CurrentTeamId as int?;
+
+    int? coachTeamId =
+        ViewBag.CoachTeamId as int?;
+
+    string? currentUserId =
+        ViewBag.CurrentUserId as string;
 }
 
 <h1>Отбори</h1>
@@ -40,6 +50,12 @@
            asp-action="Requests"
            class="btn btn-warning">
             Заявки за играчи
+        </a>
+
+        <a asp-controller="Teams"
+           asp-action="CoachRequests"
+           class="btn btn-warning">
+            Заявки за треньори
         </a>
     </p>
 }
@@ -126,6 +142,12 @@ else
                                     Вече си играч в отбор
                                 </span>
                             }
+                            else if (coachTeamId != null)
+                            {
+                                <span class="text-muted">
+                                    Треньорът не може да бъде играч
+                                </span>
+                            }
                             else if (requestedTeamIds.Contains(team.Id))
                             {
                                 <span class="badge bg-warning text-dark">
@@ -149,19 +171,46 @@ else
                                 </form>
                             }
 
-                            @if (team.Coach == null)
+                            @if (team.CoachId != null &&
+                                 team.CoachId == currentUserId)
                             {
-                                <button type="button"
-                                        class="btn btn-primary btn-sm"
-                                        disabled>
-                                    Кандидатствай за треньор
-                                </button>
+                                <span class="badge bg-primary">
+                                    Ти си треньор на този отбор
+                                </span>
                             }
-                            else
+                            else if (team.CoachId != null)
                             {
                                 <span class="text-muted">
                                     Отборът вече има треньор
                                 </span>
+                            }
+                            else if (currentTeamId != null ||
+                                     coachTeamId != null)
+                            {
+                                // Играч в отбор или треньор на
+                                // друг отбор не може да кандидатства
+                            }
+                            else if (requestedCoachTeamIds.Contains(team.Id))
+                            {
+                                <span class="badge bg-warning text-dark">
+                                    Заявката за треньор чака одобрение
+                                </span>
+                            }
+                            else
+                            {
+                                <form asp-controller="Teams"
+                                      asp-action="ApplyCoach"
+                                      method="post">
+
+                                    <input type="hidden"
+                                           name="teamId"
+                                           value="@team.Id" />
+
+                                    <button type="submit"
+                                            class="btn btn-primary btn-sm">
+                                        Кандидатствай за треньор
+                                    </button>
+                                </form>
                             }
 
                         </div>
@@ -180,8 +229,3 @@ else
         </tbody>
     </table>
 }
-
-<p class="text-muted">
-    Бутонът за кандидатстване за треньор ще стане
-    активен след създаването на заявките в базата.
-</p>

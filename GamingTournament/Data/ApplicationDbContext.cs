@@ -51,7 +51,7 @@ public class ApplicationDbContext
             .HasOne(request => request.Player)
             .WithMany(player => player.TeamJoinRequests)
             .HasForeignKey(request => request.PlayerId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<TeamJoinRequest>()
             .HasOne(request => request.Team)
@@ -64,7 +64,7 @@ public class ApplicationDbContext
             .HasOne(request => request.Player)
             .WithMany(player => player.CoachRequests)
             .HasForeignKey(request => request.PlayerId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<CoachRequest>()
             .HasOne(request => request.Team)

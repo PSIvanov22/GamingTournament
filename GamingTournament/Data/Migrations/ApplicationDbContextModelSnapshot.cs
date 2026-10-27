@@ -320,7 +320,7 @@ namespace GamingTournament.Data.Migrations
                     b.HasOne("GamingTournament.Models.ApplicationUser", "Player")
                         .WithMany("CoachRequests")
                         .HasForeignKey("PlayerId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("GamingTournament.Models.Team", "Team")
@@ -349,7 +349,7 @@ namespace GamingTournament.Data.Migrations
                     b.HasOne("GamingTournament.Models.ApplicationUser", "Player")
                         .WithMany("TeamJoinRequests")
                         .HasForeignKey("PlayerId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("GamingTournament.Models.Team", "Team")

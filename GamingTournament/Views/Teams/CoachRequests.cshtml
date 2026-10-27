@@ -1,0 +1,104 @@
+@model List<GamingTournament.Models.CoachRequest>
+
+@{
+    ViewData["Title"] =
+        "Заявки за треньор";
+}
+
+<h1>Заявки за треньор</h1>
+
+@if (TempData["SuccessMessage"] != null)
+{
+    <div class="alert alert-success">
+        @TempData["SuccessMessage"]
+    </div>
+}
+
+@if (TempData["ErrorMessage"] != null)
+{
+    <div class="alert alert-danger">
+        @TempData["ErrorMessage"]
+    </div>
+}
+
+<p>
+    <a asp-controller="Teams"
+       asp-action="Index"
+       class="btn btn-secondary">
+        Назад към отборите
+    </a>
+</p>
+
+@if (Model.Count == 0)
+{
+    <div class="alert alert-info">
+        В момента няма чакащи заявки за треньор.
+    </div>
+}
+else
+{
+    <table class="table table-bordered table-striped">
+        <thead>
+        <tr>
+            <th>Кандидат</th>
+            <th>Отбор</th>
+            <th>Дата на заявката</th>
+            <th>Действия</th>
+        </tr>
+        </thead>
+
+        <tbody>
+        @foreach (var request in Model)
+        {
+            <tr>
+                <td>
+                    @request.Player?.Email
+                </td>
+
+                <td>
+                    @request.Team?.Name
+                </td>
+
+                <td>
+                    @request.CreatedOn.ToString(
+                        "dd.MM.yyyy HH:mm")
+                </td>
+
+                <td>
+                    <div class="d-flex gap-2">
+
+                        <form asp-controller="Teams"
+                              asp-action="ApproveCoach"
+                              method="post">
+
+                            <input type="hidden"
+                                   name="id"
+                                   value="@request.Id" />
+
+                            <button type="submit"
+                                    class="btn btn-success btn-sm">
+                                Приеми
+                            </button>
+                        </form>
+
+                        <form asp-controller="Teams"
+                              asp-action="RejectCoach"
+                              method="post">
+
+                            <input type="hidden"
+                                   name="id"
+                                   value="@request.Id" />
+
+                            <button type="submit"
+                                    class="btn btn-danger btn-sm">
+                                Откажи
+                            </button>
+                        </form>
+
+                    </div>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
