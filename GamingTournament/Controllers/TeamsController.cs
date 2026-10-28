@@ -23,12 +23,35 @@ public class TeamsController : Controller
     }
 
     [AllowAnonymous]
-    public async Task<IActionResult> Index()
+    public async Task<IActionResult> Index(int page = 1)
     {
+        const int pageSize = 5;
+
+        int totalTeams = await _context.Teams.CountAsync();
+
+        // round up: 6 teams / 5 per page -> 2 pages, not 1
+        int totalPages = (totalTeams + pageSize - 1) / pageSize;
+
+        // ?page=0 or ?page=99 from the address bar -> clamp to a real page.
+        // totalPages > 0 check: with no teams page would become 0 -> Skip(-5)
+        if (page < 1)
+        {
+            page = 1;
+        }
+
+        if (page > totalPages && totalPages > 0)
+        {
+            page = totalPages;
+        }
+
+        // OrderBy before Skip/Take, otherwise the DB may return
+        // rows in any order and pages would overlap
         List<Team> teams = await _context.Teams
             .Include(team => team.Members)
             .Include(team => team.Coach)
             .OrderBy(team => team.Name)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync();
 
         HashSet<int> requestedTeamIds =
@@ -71,10 +94,13 @@ public class TeamsController : Controller
 
                 ViewBag.CurrentUserId = playerId;
 
-                ViewBag.CoachTeamId = teams
-                    .FirstOrDefault(team =>
-                        team.CoachId == playerId)
-                    ?.Id;
+                // ask the DB, not the current page: the user's
+                // team may be on another page
+                ViewBag.CoachTeamId =
+                    await _context.Teams
+                        .Where(team => team.CoachId == playerId)
+                        .Select(team => (int?)team.Id)
+                        .FirstOrDefaultAsync();
             }
         }
 
@@ -83,6 +109,9 @@ public class TeamsController : Controller
 
         ViewBag.RequestedCoachTeamIds =
             requestedCoachTeamIds;
+
+        ViewBag.CurrentPage = page;
+        ViewBag.TotalPages = totalPages;
 
         return View(teams);
     }
