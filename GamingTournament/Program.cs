@@ -122,6 +122,9 @@ using (IServiceScope scope = app.Services.CreateScope())
         }
     }
 
+    // Начални данни: отбори, играчи, треньори, заявки, мачове.
+    // Само ако базата още няма отбори
+    await SeedData.SeedAsync(context, userManager);
 }
 
 if (!app.Environment.IsDevelopment())

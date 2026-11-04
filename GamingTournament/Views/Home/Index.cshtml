@@ -1,8 +1,152 @@
-﻿@{
-    ViewData["Title"] = "Home Page";
+﻿@model GamingTournament.Models.HomeIndexViewModel
+
+@{
+    ViewData["Title"] = "Начало";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="text-center mb-4">
+    <h1 class="display-5">GamingTournament</h1>
+
+    <p class="lead text-muted">
+        Отбори, играчи и мачове на едно място.
+    </p>
+
+    <a asp-controller="Teams"
+       asp-action="Index"
+       class="btn btn-primary">
+        Към отборите
+    </a>
+
+    <a asp-controller="Matches"
+       asp-action="Index"
+       class="btn btn-outline-primary">
+        Всички мачове
+    </a>
+
+    @* guests only - logged in users already have an account *@
+    @if (User.Identity == null || !User.Identity.IsAuthenticated)
+    {
+        <a asp-area="Identity"
+           asp-page="/Account/Register"
+           class="btn btn-success">
+            Регистрирай се
+        </a>
+    }
+</div>
+
+<div class="row text-center mb-4">
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="fs-2 fw-bold">@Model.TeamCount</div>
+                <div class="text-muted">Отбори</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="fs-2 fw-bold">@Model.PlayerCount</div>
+                <div class="text-muted">Играчи в отбори</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="fs-2 fw-bold">@Model.FinishedMatchCount</div>
+                <div class="text-muted">Изиграни мача</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="fs-2 fw-bold">@Model.ScheduledMatchCount</div>
+                <div class="text-muted">Предстоящи мача</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <h4>Предстоящи мачове</h4>
+
+        @if (Model.UpcomingMatches.Count == 0)
+        {
+            <div class="alert alert-info">
+                Няма насрочени мачове.
+            </div>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var match in Model.UpcomingMatches)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>
+                            @match.HomeTeam?.Name
+                            <span class="text-muted">срещу</span>
+                            @match.AwayTeam?.Name
+                        </span>
+
+                        <span class="badge bg-primary">
+                            @match.ScheduledOn.ToString("dd.MM.yyyy HH:mm")
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="col-md-6 mb-4">
+        <h4>Последни резултати</h4>
+
+        @if (Model.RecentResults.Count == 0)
+        {
+            <div class="alert alert-info">
+                Все още няма изиграни мачове.
+            </div>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var match in Model.RecentResults)
+                {
+                    @* winner in bold, same as on the matches page *@
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>
+                            @if (match.WinnerTeamId == match.HomeTeamId)
+                            {
+                                <strong>@match.HomeTeam?.Name</strong>
+                            }
+                            else
+                            {
+                                @match.HomeTeam?.Name
+                            }
+
+                            <span class="mx-1">@match.HomeScore : @match.AwayScore</span>
+
+                            @if (match.WinnerTeamId == match.AwayTeamId)
+                            {
+                                <strong>@match.AwayTeam?.Name</strong>
+                            }
+                            else
+                            {
+                                @match.AwayTeam?.Name
+                            }
+                        </span>
+
+                        <span class="text-muted small">
+                            @match.ScheduledOn.ToString("dd.MM.yyyy")
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
 </div>
