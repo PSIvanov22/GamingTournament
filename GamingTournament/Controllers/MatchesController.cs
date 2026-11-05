@@ -23,6 +23,7 @@ public class MatchesController : Controller
     {
         // upcoming first, then the rest by date
         List<Match> matches = await _context.Matches
+            .Include(match => match.Tournament)
             .Include(match => match.HomeTeam)
             .Include(match => match.AwayTeam)
             .OrderBy(match =>
@@ -67,9 +68,32 @@ public class MatchesController : Controller
         }
 
         // [Required] passed, so .Value is safe from here on
+        int tournamentId = model.TournamentId!.Value;
         int homeTeamId = model.HomeTeamId!.Value;
         int awayTeamId = model.AwayTeamId!.Value;
         DateTime scheduledOn = model.ScheduledOn!.Value;
+
+        Tournament? tournament = await _context.Tournaments
+            .FindAsync(tournamentId);
+
+        if (tournament == null)
+        {
+            return NotFound();
+        }
+
+        // compare dates only: EndDate is the whole last day
+        if (scheduledOn.Date < tournament.StartDate ||
+            scheduledOn.Date > tournament.EndDate)
+        {
+            ModelState.AddModelError(
+                nameof(model.ScheduledOn),
+                $"Турнирът е от {tournament.StartDate:dd.MM.yyyy} " +
+                $"до {tournament.EndDate:dd.MM.yyyy}.");
+
+            await FillTeamsAsync();
+
+            return View(model);
+        }
 
         // ids come from a <select>, but a POST can be forged -
         // check they really exist
@@ -108,6 +132,7 @@ public class MatchesController : Controller
         // lets the admin record a match that was already played
         Match match = new Match
         {
+            TournamentId = tournamentId,
             HomeTeamId = homeTeamId,
             AwayTeamId = awayTeamId,
             ScheduledOn = scheduledOn
@@ -243,5 +268,15 @@ public class MatchesController : Controller
             teams,
             nameof(Team.Id),
             nameof(Team.Name));
+
+        // newest tournament first - that's usually the one needed
+        List<Tournament> tournaments = await _context.Tournaments
+            .OrderByDescending(tournament => tournament.StartDate)
+            .ToListAsync();
+
+        ViewBag.Tournaments = new SelectList(
+            tournaments,
+            nameof(Tournament.Id),
+            nameof(Tournament.Name));
     }
 }

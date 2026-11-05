@@ -6,6 +6,10 @@ namespace GamingTournament.Models;
 // binding Match directly would let someone post Status or scores
 public class MatchCreateViewModel
 {
+    [Required(ErrorMessage = "Избери турнир.")]
+    [Display(Name = "Турнир")]
+    public int? TournamentId { get; set; }
+
     [Required(ErrorMessage = "Избери домакин.")]
     [Display(Name = "Домакин")]
     public int? HomeTeamId { get; set; }

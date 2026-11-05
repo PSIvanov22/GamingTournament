@@ -13,6 +13,8 @@ public class Team
     [StringLength(80)]
     public string? Country { get; set; }
 
+    // same range as CK_Teams_FoundedYear in the database
+    [Range(1990, 2100, ErrorMessage = "Годината трябва да е между 1990 и 2100.")]
     public int? FoundedYear { get; set; }
 
     public string? CoachId { get; set; }

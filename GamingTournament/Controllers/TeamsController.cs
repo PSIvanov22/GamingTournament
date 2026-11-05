@@ -129,6 +129,18 @@ public class TeamsController : Controller
     public async Task<IActionResult> Create(
         Team team)
     {
+        // Name is UNIQUE in the database - without this check
+        // a duplicate would crash on SaveChanges
+        bool nameTaken = await _context.Teams
+            .AnyAsync(item => item.Name == team.Name);
+
+        if (nameTaken)
+        {
+            ModelState.AddModelError(
+                nameof(team.Name),
+                "Вече има отбор с това име.");
+        }
+
         if (!ModelState.IsValid)
         {
             return View(team);

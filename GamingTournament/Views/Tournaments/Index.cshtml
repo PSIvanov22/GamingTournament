@@ -1,0 +1,87 @@
+@model List<GamingTournament.Models.Tournament>
+
+@{
+    ViewData["Title"] = "Турнири";
+    DateTime today = DateTime.Today;
+}
+
+<h1>Турнири</h1>
+
+@if (TempData["SuccessMessage"] != null)
+{
+    <div class="alert alert-success">
+        @TempData["SuccessMessage"]
+    </div>
+}
+
+@if (User.IsInRole("Admin"))
+{
+    <p>
+        <a asp-controller="Tournaments"
+           asp-action="Create"
+           class="btn btn-primary">
+            Създай нов турнир
+        </a>
+    </p>
+}
+
+@if (Model.Count == 0)
+{
+    <div class="alert alert-info">
+        Все още няма създадени турнири.
+    </div>
+}
+else
+{
+    <table class="table table-bordered table-striped">
+        <thead>
+        <tr>
+            <th>Име</th>
+            <th>Игра</th>
+            <th>Период</th>
+            <th>Мачове</th>
+            <th>Статус</th>
+        </tr>
+        </thead>
+
+        <tbody>
+        @foreach (var tournament in Model)
+        {
+            <tr>
+                <td>
+                    <strong>@tournament.Name</strong>
+                </td>
+
+                <td>@tournament.Game</td>
+
+                <td>
+                    @tournament.StartDate.ToString("dd.MM.yyyy")
+                    –
+                    @tournament.EndDate.ToString("dd.MM.yyyy")
+                </td>
+
+                @* played / all, cancelled ones included in "all" *@
+                <td>
+                    @tournament.Matches.Count(match => match.Status == MatchStatus.Finished)
+                    / @tournament.Matches.Count
+                </td>
+
+                <td>
+                    @if (today < tournament.StartDate)
+                    {
+                        <span class="badge bg-primary">Предстоящ</span>
+                    }
+                    else if (today > tournament.EndDate)
+                    {
+                        <span class="badge bg-secondary">Приключил</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-success">Тече</span>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

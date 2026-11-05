@@ -1,0 +1,66 @@
+@model GamingTournament.Models.Tournament
+
+@{
+    ViewData["Title"] = "Създаване на турнир";
+}
+
+<h1>Създаване на турнир</h1>
+
+<hr />
+
+<div class="row">
+    <div class="col-md-6">
+
+        <form asp-controller="Tournaments"
+              asp-action="Create"
+              method="post">
+
+            <div asp-validation-summary="ModelOnly"
+                 class="text-danger">
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Name" class="form-label"></label>
+                <input asp-for="Name" class="form-control" />
+                <span asp-validation-for="Name" class="text-danger"></span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Game" class="form-label"></label>
+                <input asp-for="Game" class="form-control" />
+                <span asp-validation-for="Game" class="text-danger"></span>
+            </div>
+
+            @* [DataType(Date)] renders as <input type="date"> *@
+            <div class="mb-3">
+                <label asp-for="StartDate" class="form-label"></label>
+                <input asp-for="StartDate" class="form-control" />
+                <span asp-validation-for="StartDate" class="text-danger"></span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="EndDate" class="form-label"></label>
+                <input asp-for="EndDate" class="form-control" />
+                <span asp-validation-for="EndDate" class="text-danger"></span>
+            </div>
+
+            <button type="submit"
+                    class="btn btn-success">
+                Създай
+            </button>
+
+            <a asp-controller="Tournaments"
+               asp-action="Index"
+               class="btn btn-secondary">
+                Назад
+            </a>
+
+        </form>
+
+    </div>
+</div>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}

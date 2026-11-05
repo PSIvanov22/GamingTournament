@@ -43,6 +43,7 @@ else
         <thead>
         <tr>
             <th>Дата</th>
+            <th>Турнир</th>
             <th>Домакин</th>
             <th>Резултат</th>
             <th>Гост</th>
@@ -60,6 +61,10 @@ else
             <tr>
                 <td>
                     @match.ScheduledOn.ToString("dd.MM.yyyy HH:mm")
+                </td>
+
+                <td>
+                    @match.Tournament?.Name
                 </td>
 
                 @* winner in bold *@

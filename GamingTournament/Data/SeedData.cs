@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace GamingTournament.Data;
 
 // Starting data for an empty database: teams, players, coaches,
-// requests and matches. Runs on every start from Program.cs,
+// requests, tournaments and matches. Runs on every start from Program.cs,
 // but only does something while there are no teams yet.
 //
 // Users go through UserManager (not HasData) so the passwords
@@ -85,21 +85,43 @@ public static class SeedData
         // no matter when the database gets created
         DateTime today = DateTime.Today;
 
+        // the autumn cup is running now, the winter one is next
+        Tournament autumnCup = new Tournament
+        {
+            Name = "Autumn Cup",
+            Game = "Counter-Strike 2",
+            StartDate = today.AddDays(-14),
+            EndDate = today.AddDays(10)
+        };
+
+        Tournament winterChampionship = new Tournament
+        {
+            Name = "Winter Championship",
+            Game = "Valorant",
+            StartDate = today.AddDays(20),
+            EndDate = today.AddDays(40)
+        };
+
+        context.Tournaments.AddRange(autumnCup, winterChampionship);
+        await context.SaveChangesAsync();
+
         context.Matches.AddRange(
-            Finished(wolves, phoenix, today.AddDays(-10).AddHours(18), 3, 1),
-            Finished(sharks, titans, today.AddDays(-7).AddHours(19), 2, 2),
-            Finished(dragons, wolves, today.AddDays(-5).AddHours(18), 0, 2),
-            Finished(phoenix, storm, today.AddDays(-3).AddHours(20), 1, 0),
+            Finished(autumnCup, wolves, phoenix, today.AddDays(-10).AddHours(18), 3, 1),
+            Finished(autumnCup, sharks, titans, today.AddDays(-7).AddHours(19), 2, 2),
+            Finished(autumnCup, dragons, wolves, today.AddDays(-5).AddHours(18), 0, 2),
+            Finished(autumnCup, phoenix, storm, today.AddDays(-3).AddHours(20), 1, 0),
             new Match
             {
+                TournamentId = autumnCup.Id,
                 HomeTeamId = titans.Id,
                 AwayTeamId = storm.Id,
                 ScheduledOn = today.AddDays(-2).AddHours(18),
                 Status = MatchStatus.Cancelled
             },
-            Scheduled(wolves, sharks, today.AddDays(2).AddHours(18)),
-            Scheduled(phoenix, titans, today.AddDays(4).AddHours(19)),
-            Scheduled(storm, dragons, today.AddDays(7).AddHours(20)));
+            Scheduled(autumnCup, wolves, sharks, today.AddDays(2).AddHours(18)),
+            Scheduled(autumnCup, phoenix, titans, today.AddDays(4).AddHours(19)),
+            Scheduled(autumnCup, storm, dragons, today.AddDays(7).AddHours(20)),
+            Scheduled(winterChampionship, wolves, titans, today.AddDays(22).AddHours(18)));
 
         // one save for coaches, requests and matches
         await context.SaveChangesAsync();
@@ -165,10 +187,12 @@ public static class SeedData
     }
 
     private static Match Finished(
-        Team home, Team away, DateTime scheduledOn, int homeScore, int awayScore)
+        Tournament tournament, Team home, Team away,
+        DateTime scheduledOn, int homeScore, int awayScore)
     {
         return new Match
         {
+            TournamentId = tournament.Id,
             HomeTeamId = home.Id,
             AwayTeamId = away.Id,
             ScheduledOn = scheduledOn,
@@ -178,10 +202,12 @@ public static class SeedData
         };
     }
 
-    private static Match Scheduled(Team home, Team away, DateTime scheduledOn)
+    private static Match Scheduled(
+        Tournament tournament, Team home, Team away, DateTime scheduledOn)
     {
         return new Match
         {
+            TournamentId = tournament.Id,
             HomeTeamId = home.Id,
             AwayTeamId = away.Id,
             ScheduledOn = scheduledOn,

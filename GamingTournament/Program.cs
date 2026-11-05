@@ -12,7 +12,7 @@ var connectionString =
 
 builder.Services.AddDbContext<ApplicationDbContext>(
     options =>
-        options.UseSqlite(connectionString)
+        options.UseSqlServer(connectionString)
 );
 
 builder.Services

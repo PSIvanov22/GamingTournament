@@ -29,6 +29,8 @@ public class ApplicationDbContext
 
     public DbSet<Match> Matches { get; set; } = null!;
 
+    public DbSet<Tournament> Tournaments { get; set; } = null!;
+
     protected override void OnModelCreating(
         ModelBuilder builder)
     {
@@ -97,10 +99,85 @@ public class ApplicationDbContext
             .HasConversion<string>()
             .HasMaxLength(20);
 
-        // second line of defence, the controller checks this too
+        // CHECK constraints: second line of defence, the controllers
+        // and [Range] attributes check the same things first
         builder.Entity<Match>()
+            .ToTable(table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_Matches_DifferentTeams",
+                    "[HomeTeamId] <> [AwayTeamId]");
+
+                table.HasCheckConstraint(
+                    "CK_Matches_Scores",
+                    "([HomeScore] IS NULL OR [HomeScore] >= 0) AND " +
+                    "([AwayScore] IS NULL OR [AwayScore] >= 0)");
+
+                // a finished match without a score makes no sense
+                table.HasCheckConstraint(
+                    "CK_Matches_FinishedHasScores",
+                    "[Status] <> 'Finished' OR " +
+                    "([HomeScore] IS NOT NULL AND [AwayScore] IS NOT NULL)");
+
+                // the enum is stored as text - only its 3 names allowed
+                table.HasCheckConstraint(
+                    "CK_Matches_Status",
+                    "[Status] IN ('Scheduled', 'Finished', 'Cancelled')");
+            });
+
+        // Tournaments
+        builder.Entity<Tournament>()
+            .HasIndex(tournament => tournament.Name)
+            .IsUnique();
+
+        builder.Entity<Tournament>()
+            .Property(tournament => tournament.StartDate)
+            .HasColumnType("date");
+
+        builder.Entity<Tournament>()
+            .Property(tournament => tournament.EndDate)
+            .HasColumnType("date");
+
+        builder.Entity<Tournament>()
             .ToTable(table => table.HasCheckConstraint(
-                "CK_Matches_DifferentTeams",
-                "HomeTeamId <> AwayTeamId"));
+                "CK_Tournaments_Dates",
+                "[EndDate] >= [StartDate]"));
+
+        // Restrict, same reason as the teams: keep the match history
+        builder.Entity<Match>()
+            .HasOne(match => match.Tournament)
+            .WithMany(tournament => tournament.Matches)
+            .HasForeignKey(match => match.TournamentId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Teams
+        builder.Entity<Team>()
+            .HasIndex(team => team.Name)
+            .IsUnique();
+
+        builder.Entity<Team>()
+            .ToTable(table => table.HasCheckConstraint(
+                "CK_Teams_FoundedYear",
+                "[FoundedYear] IS NULL OR " +
+                "[FoundedYear] BETWEEN 1990 AND 2100"));
+
+        // Requests: the status strings the controllers use
+        builder.Entity<TeamJoinRequest>()
+            .Property(request => request.Status)
+            .HasMaxLength(20);
+
+        builder.Entity<TeamJoinRequest>()
+            .ToTable(table => table.HasCheckConstraint(
+                "CK_TeamJoinRequests_Status",
+                "[Status] IN ('Pending', 'Approved', 'Rejected')"));
+
+        builder.Entity<CoachRequest>()
+            .Property(request => request.Status)
+            .HasMaxLength(20);
+
+        builder.Entity<CoachRequest>()
+            .ToTable(table => table.HasCheckConstraint(
+                "CK_CoachRequests_Status",
+                "[Status] IN ('Pending', 'Approved', 'Rejected')"));
     }
 }

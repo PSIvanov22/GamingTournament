@@ -7,6 +7,10 @@ public class Match
 {
     public int Id { get; set; }
 
+    public int TournamentId { get; set; }
+
+    public Tournament? Tournament { get; set; }
+
     // two FKs to the same table (Teams) -
     // the mapping is in ApplicationDbContext
     public int HomeTeamId { get; set; }

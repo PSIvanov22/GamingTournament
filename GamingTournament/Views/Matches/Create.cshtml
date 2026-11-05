@@ -19,6 +19,21 @@
                  class="text-danger">
             </div>
 
+            <div class="mb-3">
+                <label asp-for="TournamentId"
+                       class="form-label"></label>
+
+                <select asp-for="TournamentId"
+                        asp-items="ViewBag.Tournaments"
+                        class="form-select">
+                    <option value="">-- избери --</option>
+                </select>
+
+                <span asp-validation-for="TournamentId"
+                      class="text-danger">
+                </span>
+            </div>
+
             @* ViewBag.Teams is a SelectList built in the controller *@
             <div class="mb-3">
                 <label asp-for="HomeTeamId"
