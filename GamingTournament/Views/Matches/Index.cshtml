@@ -4,7 +4,7 @@
     ViewData["Title"] = "Мачове";
 }
 
-<h1>Мачове</h1>
+<h1 class="page-title">Мачове</h1>
 
 @if (TempData["SuccessMessage"] != null)
 {
@@ -39,7 +39,8 @@
 }
 else
 {
-    <table class="table table-bordered table-striped">
+    <div class="table-card table-responsive">
+    <table class="table table-hover align-middle">
         <thead>
         <tr>
             <th>Дата</th>
@@ -82,7 +83,7 @@ else
                 <td class="text-center">
                     @if (match.Status == MatchStatus.Finished)
                     {
-                        <span>@match.HomeScore : @match.AwayScore</span>
+                        <span class="score">@match.HomeScore : @match.AwayScore</span>
                     }
                     else
                     {
@@ -159,4 +160,5 @@ else
         }
         </tbody>
     </table>
+    </div>
 }

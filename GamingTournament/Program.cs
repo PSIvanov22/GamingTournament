@@ -12,7 +12,7 @@ var connectionString =
 
 builder.Services.AddDbContext<ApplicationDbContext>(
     options =>
-        options.UseSqlServer(connectionString)
+        options.UseSqlite(connectionString)
 );
 
 builder.Services
@@ -37,14 +37,14 @@ using (IServiceScope scope = app.Services.CreateScope())
 {
     IServiceProvider services = scope.ServiceProvider;
 
-    // Създава базата и прилага всички миграции,
-    // ако още не са приложени
+    // Създава базата и таблиците от моделите
+    // (миграциите са за SQL Server и не са съвместими със SQLite)
     ApplicationDbContext context =
         services.GetRequiredService<
             ApplicationDbContext
         >();
 
-    await context.Database.MigrateAsync();
+    await context.Database.EnsureCreatedAsync();
 
     RoleManager<IdentityRole> roleManager =
         services.GetRequiredService<

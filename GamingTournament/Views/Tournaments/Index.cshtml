@@ -5,7 +5,7 @@
     DateTime today = DateTime.Today;
 }
 
-<h1>Турнири</h1>
+<h1 class="page-title">Турнири</h1>
 
 @if (TempData["SuccessMessage"] != null)
 {
@@ -33,7 +33,8 @@
 }
 else
 {
-    <table class="table table-bordered table-striped">
+    <div class="table-card table-responsive">
+    <table class="table table-hover align-middle">
         <thead>
         <tr>
             <th>Име</th>
@@ -84,4 +85,5 @@ else
         }
         </tbody>
     </table>
+    </div>
 }

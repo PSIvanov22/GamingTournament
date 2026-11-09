@@ -1,5 +1,32 @@
+/* ===== GamingTournament – тъмна гейминг тема ===== */
+
+:root,
+[data-bs-theme="dark"] {
+  --gt-bg: #0b0f1a;
+  --gt-surface: #131a2b;
+  --gt-surface-2: #19223a;
+  --gt-border: #263152;
+  --gt-text: #e6e9f2;
+  --gt-muted: #8d97b5;
+  --gt-accent: #7c5cff;
+  --gt-accent-2: #22d3ee;
+  --gt-success: #22c55e;
+  --gt-warning: #f59e0b;
+  --gt-danger: #ef4444;
+
+  --bs-body-bg: var(--gt-bg);
+  --bs-body-color: var(--gt-text);
+  --bs-secondary-color: var(--gt-muted);
+  --bs-border-color: var(--gt-border);
+  --bs-link-color-rgb: 124, 92, 255;
+  --bs-link-hover-color-rgb: 34, 211, 238;
+  --bs-border-radius: 0.75rem;
+}
+
 html {
-  font-size: 14px;
+  font-size: 15px;
+  position: relative;
+  min-height: 100%;
 }
 
 @media (min-width: 768px) {
@@ -8,24 +35,295 @@ html {
   }
 }
 
-.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
-}
-
-html {
-  position: relative;
-  min-height: 100%;
-}
-
 body {
-  margin-bottom: 60px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(900px 500px at 85% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
+    radial-gradient(700px 400px at -10% 10%, rgba(34, 211, 238, 0.10), transparent 60%),
+    var(--gt-bg);
+  background-attachment: fixed;
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-.form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
+h1, h2, h3, h4, h5 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.page-title {
+  margin: 1.5rem 0 1.25rem;
+  padding-left: 0.9rem;
+  border-left: 4px solid var(--gt-accent);
+}
+
+/* ===== Навигация ===== */
+.site-navbar {
+  background: rgba(11, 15, 26, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--gt-border);
+}
+
+.site-navbar .navbar-brand {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, var(--gt-accent), var(--gt-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.site-navbar .nav-link {
+  color: var(--gt-muted);
+  font-weight: 500;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  transition: color 0.15s, background 0.15s;
+}
+
+.site-navbar .nav-link:hover {
+  color: var(--gt-text);
+  background: var(--gt-surface-2);
+}
+
+.site-navbar .nav-link.active {
+  color: #fff;
+  background: rgba(124, 92, 255, 0.22);
+  box-shadow: inset 0 -2px 0 var(--gt-accent);
+}
+
+.site-navbar .btn-link.nav-link {
+  text-decoration: none;
+}
+
+/* ===== Бутони ===== */
+.btn {
+  font-weight: 600;
+  border-radius: 0.6rem;
+  transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  --bs-btn-bg: var(--gt-accent);
+  --bs-btn-border-color: var(--gt-accent);
+  --bs-btn-hover-bg: #6a49f0;
+  --bs-btn-hover-border-color: #6a49f0;
+  --bs-btn-active-bg: #5b3ddb;
+  --bs-btn-active-border-color: #5b3ddb;
+  box-shadow: 0 4px 14px rgba(124, 92, 255, 0.35);
+}
+
+.btn-outline-primary {
+  --bs-btn-color: #b3a2ff;
+  --bs-btn-border-color: var(--gt-accent);
+  --bs-btn-hover-bg: var(--gt-accent);
+  --bs-btn-hover-border-color: var(--gt-accent);
+  --bs-btn-hover-color: #fff;
+}
+
+.btn-success {
+  --bs-btn-bg: #16a34a;
+  --bs-btn-border-color: #16a34a;
+  --bs-btn-hover-bg: #15803d;
+  --bs-btn-hover-border-color: #15803d;
+}
+
+.btn:focus,
+.btn:active:focus,
+.btn-link.nav-link:focus,
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+  box-shadow: 0 0 0 0.2rem rgba(124, 92, 255, 0.35);
+  border-color: var(--gt-accent);
+}
+
+/* ===== Карти ===== */
+.card {
+  background: var(--gt-surface);
+  border: 1px solid var(--gt-border);
+  border-radius: 1rem;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--gt-accent);
+  box-shadow: 0 10px 30px rgba(124, 92, 255, 0.18);
+}
+
+.stat-number {
+  font-size: 2.4rem;
+  font-weight: 800;
+  line-height: 1.1;
+  background: linear-gradient(90deg, var(--gt-accent), var(--gt-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.stat-label {
+  color: var(--gt-muted);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ===== Hero ===== */
+.hero {
+  padding: 3.5rem 1.5rem;
+  margin: 1.5rem 0 2rem;
+  text-align: center;
+  border: 1px solid var(--gt-border);
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(135deg, rgba(124, 92, 255, 0.22), rgba(34, 211, 238, 0.10)),
+    var(--gt-surface);
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.4rem);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hero .lead {
+  color: var(--gt-muted);
+  max-width: 36rem;
+  margin: 0.5rem auto 1.5rem;
+}
+
+.section-title {
+  margin: 0.5rem 0 1rem;
+  font-size: 1.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gt-muted);
+}
+
+/* ===== Таблици ===== */
+.table-card {
+  background: var(--gt-surface);
+  border: 1px solid var(--gt-border);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.table-card .table {
+  --bs-table-bg: transparent;
+  --bs-table-hover-bg: rgba(124, 92, 255, 0.08);
+  margin-bottom: 0;
+}
+
+.table-card thead th {
+  background: var(--gt-surface-2);
+  color: var(--gt-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--gt-border);
+  white-space: nowrap;
+}
+
+.table-card td,
+.table-card th {
+  padding: 0.85rem 1rem;
+  border-color: var(--gt-border);
+}
+
+/* ===== Списъци (начална страница) ===== */
+.list-group-item {
+  background: var(--gt-surface);
+  border-color: var(--gt-border);
+  padding: 0.85rem 1rem;
+}
+
+.list-group {
+  border-radius: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--gt-border);
+}
+
+.score {
+  display: inline-block;
+  min-width: 3.6rem;
+  margin: 0 0.4rem;
+  padding: 0.1rem 0.6rem;
+  text-align: center;
+  font-weight: 800;
+  border-radius: 0.5rem;
+  background: var(--gt-surface-2);
+  border: 1px solid var(--gt-border);
+}
+
+/* ===== Значки и известия ===== */
+.badge {
+  font-weight: 600;
+  padding: 0.4em 0.75em;
+  border-radius: 999px;
+}
+
+.alert {
+  border-radius: 0.75rem;
+  border-width: 1px;
+}
+
+/* ===== Форми ===== */
+.form-control,
+.form-select {
+  background-color: var(--gt-surface-2);
+  border-color: var(--gt-border);
+  color: var(--gt-text);
+  border-radius: 0.6rem;
+}
+
+.form-control::placeholder {
+  color: var(--gt-muted);
+}
+
+.form-floating > .form-control-plaintext::placeholder,
+.form-floating > .form-control::placeholder {
   color: var(--bs-secondary-color);
   text-align: end;
 }
 
-.form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
+.form-floating > .form-control-plaintext:focus::placeholder,
+.form-floating > .form-control:focus::placeholder {
   text-align: start;
+}
+
+/* ===== Пагинация ===== */
+.pagination {
+  --bs-pagination-bg: var(--gt-surface);
+  --bs-pagination-border-color: var(--gt-border);
+  --bs-pagination-hover-bg: var(--gt-surface-2);
+  --bs-pagination-active-bg: var(--gt-accent);
+  --bs-pagination-active-border-color: var(--gt-accent);
+  margin-top: 1.25rem;
+}
+
+/* ===== Футър ===== */
+.site-footer {
+  margin-top: 2.5rem;
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--gt-border);
+  color: var(--gt-muted);
+  font-size: 0.9rem;
+}
+
+.site-footer a {
+  color: var(--gt-muted);
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  color: var(--gt-accent-2);
 }
