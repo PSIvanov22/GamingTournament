@@ -1,0 +1,3513 @@
+diff --git a/.gitignore b/.gitignore
+index bc78471..1afcab2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -482,3 +482,6 @@ $RECYCLE.BIN/
+ 
+ # Vim temporary swap files
+ *.swp
++
++# Serilog файлове с логове
++GamingTournament/logs/
+diff --git a/GamingTournament.Tests/ExceptionHandlingMiddlewareTests.cs b/GamingTournament.Tests/ExceptionHandlingMiddlewareTests.cs
+new file mode 100644
+index 0000000..132eb89
+--- /dev/null
++++ b/GamingTournament.Tests/ExceptionHandlingMiddlewareTests.cs
+@@ -0,0 +1,184 @@
++using GamingTournament.Data;
++using GamingTournament.Middleware;
++using GamingTournament.Models;
++using Microsoft.AspNetCore.Http;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.FileProviders;
++using Microsoft.Extensions.Hosting;
++using Microsoft.Extensions.Logging.Abstractions;
++
++namespace GamingTournament.Tests;
++
++public class ExceptionHandlingMiddlewareTests
++{
++    // runs the middleware with a "next" that fails on the first call;
++    // the second call is the re-executed /Home/Error, which succeeds
++    private static async Task<(DefaultHttpContext Context, int Calls)> RunAsync(
++        TestDb db, Exception exception, string environment)
++    {
++        ServiceProvider provider = new ServiceCollection()
++            .AddDbContext<ApplicationDbContext>(options =>
++                options.UseSqlite(db.Connection))
++            .BuildServiceProvider();
++
++        int calls = 0;
++
++        RequestDelegate next = _ =>
++        {
++            calls++;
++
++            if (calls == 1)
++            {
++                throw exception;
++            }
++
++            return Task.CompletedTask;
++        };
++
++        ExceptionHandlingMiddleware middleware =
++            new ExceptionHandlingMiddleware(
++                next,
++                NullLogger<ExceptionHandlingMiddleware>.Instance,
++                provider.GetRequiredService<IServiceScopeFactory>(),
++                new FakeEnvironment(environment));
++
++        DefaultHttpContext context = new DefaultHttpContext();
++        context.Request.Path = "/Matches/Create";
++        context.Request.Method = "POST";
++
++        await middleware.InvokeAsync(context);
++
++        return (context, calls);
++    }
++
++    [Fact]
++    public async Task UnhandledException_Returns500_AndPreparesErrorPage()
++    {
++        using TestDb db = new TestDb();
++
++        (DefaultHttpContext context, int calls) = await RunAsync(
++            db, new InvalidOperationException("boom"), "Production");
++
++        // the failing request + the re-executed error page
++        Assert.Equal(2, calls);
++        Assert.Equal(500, context.Response.StatusCode);
++
++        ErrorViewModel model = Assert.IsType<ErrorViewModel>(
++            context.Items[ExceptionHandlingMiddleware.ErrorItemKey]);
++
++        Assert.Equal(500, model.StatusCode);
++        Assert.Equal(context.TraceIdentifier, model.RequestId);
++
++        // the user never sees the exception text in Production
++        Assert.Null(model.Details);
++
++        // the original request is restored after the re-execute
++        Assert.Equal("/Matches/Create", context.Request.Path.Value);
++        Assert.Equal("POST", context.Request.Method);
++    }
++
++    [Fact]
++    public async Task UnhandledException_IsSavedInTheErrorLogTable()
++    {
++        using TestDb db = new TestDb();
++
++        (DefaultHttpContext context, _) = await RunAsync(
++            db, new InvalidOperationException("boom"), "Production");
++
++        ErrorLog log = Assert.Single(db.Context.ErrorLogs);
++
++        Assert.Equal("boom", log.Message);
++        Assert.Equal("InvalidOperationException", log.ExceptionType);
++        Assert.Equal("/Matches/Create", log.Path);
++        Assert.Equal("POST", log.Method);
++        Assert.Equal(500, log.StatusCode);
++        Assert.Equal(context.TraceIdentifier, log.TraceId);
++    }
++
++    [Fact]
++    public async Task DatabaseUpdateException_Returns409()
++    {
++        using TestDb db = new TestDb();
++
++        (DefaultHttpContext context, _) = await RunAsync(
++            db, new DbUpdateException("duplicate"), "Production");
++
++        Assert.Equal(409, context.Response.StatusCode);
++    }
++
++    [Fact]
++    public async Task ConcurrencyException_Returns409()
++    {
++        using TestDb db = new TestDb();
++
++        (DefaultHttpContext context, _) = await RunAsync(
++            db, new DbUpdateConcurrencyException("changed"), "Production");
++
++        Assert.Equal(409, context.Response.StatusCode);
++    }
++
++    [Fact]
++    public async Task InDevelopment_ErrorPageGetsTheExceptionDetails()
++    {
++        using TestDb db = new TestDb();
++
++        (DefaultHttpContext context, _) = await RunAsync(
++            db, new InvalidOperationException("boom"), "Development");
++
++        ErrorViewModel model = Assert.IsType<ErrorViewModel>(
++            context.Items[ExceptionHandlingMiddleware.ErrorItemKey]);
++
++        Assert.Contains("boom", model.Details);
++    }
++
++    [Fact]
++    public async Task RequestWithoutErrors_PassesThroughUntouched()
++    {
++        using TestDb db = new TestDb();
++
++        ServiceProvider provider = new ServiceCollection()
++            .AddDbContext<ApplicationDbContext>(options =>
++                options.UseSqlite(db.Connection))
++            .BuildServiceProvider();
++
++        int calls = 0;
++
++        ExceptionHandlingMiddleware middleware =
++            new ExceptionHandlingMiddleware(
++                _ =>
++                {
++                    calls++;
++                    return Task.CompletedTask;
++                },
++                NullLogger<ExceptionHandlingMiddleware>.Instance,
++                provider.GetRequiredService<IServiceScopeFactory>(),
++                new FakeEnvironment("Production"));
++
++        DefaultHttpContext context = new DefaultHttpContext();
++
++        await middleware.InvokeAsync(context);
++
++        Assert.Equal(1, calls);
++        Assert.Equal(200, context.Response.StatusCode);
++        Assert.Empty(db.Context.ErrorLogs);
++    }
++}
++
++// the smallest possible IHostEnvironment for the middleware
++class FakeEnvironment : IHostEnvironment
++{
++    public FakeEnvironment(string environmentName)
++    {
++        EnvironmentName = environmentName;
++    }
++
++    public string EnvironmentName { get; set; }
++
++    public string ApplicationName { get; set; } = "GamingTournament.Tests";
++
++    public string ContentRootPath { get; set; } = string.Empty;
++
++    public IFileProvider ContentRootFileProvider { get; set; } =
++        new NullFileProvider();
++}
+diff --git a/GamingTournament.Tests/ReportExporterTests.cs b/GamingTournament.Tests/ReportExporterTests.cs
+new file mode 100644
+index 0000000..62dffe7
+--- /dev/null
++++ b/GamingTournament.Tests/ReportExporterTests.cs
+@@ -0,0 +1,104 @@
++using ClosedXML.Excel;
++using GamingTournament.Models;
++using GamingTournament.Services;
++
++namespace GamingTournament.Tests;
++
++public class ReportExporterTests
++{
++    private static ReportData SampleData()
++    {
++        Team alpha = new Team { Id = 1, Name = "Alpha" };
++        Team beta = new Team { Id = 2, Name = "Beta" };
++
++        List<Match> matches = new List<Match>
++        {
++            new Match
++            {
++                HomeTeamId = 1,
++                AwayTeamId = 2,
++                HomeTeam = alpha,
++                AwayTeam = beta,
++                HomeScore = 2,
++                AwayScore = 1,
++                Status = MatchStatus.Finished,
++                ScheduledOn = new DateTime(2026, 1, 5, 18, 0, 0)
++            }
++        };
++
++        return new ReportData
++        {
++            TeamCount = 2,
++            FinishedMatchCount = 1,
++            SelectedTournament = new Tournament
++            {
++                Id = 1,
++                Name = "Winter Cup",
++                Game = "CS2"
++            },
++            Matches = matches,
++            Standings = ReportService.BuildStandings(matches),
++            MatchesByMonth = new List<MonthlyCount>
++            {
++                new MonthlyCount
++                {
++                    Month = new DateTime(2026, 1, 1),
++                    Count = 1
++                }
++            },
++            Games = new List<GameStat>
++            {
++                new GameStat { Game = "CS2", Tournaments = 1, Matches = 1 }
++            },
++            Teams = new List<Team> { alpha, beta }
++        };
++    }
++
++    [Fact]
++    public void ToPdf_ReturnsAPdfFile()
++    {
++        byte[] file = ReportExporter.ToPdf(SampleData());
++
++        // every PDF starts with "%PDF"
++        Assert.True(file.Length > 4);
++        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(file, 0, 4));
++    }
++
++    [Fact]
++    public void ToPdf_WorksWithoutAnyData()
++    {
++        byte[] file = ReportExporter.ToPdf(new ReportData());
++
++        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(file, 0, 4));
++    }
++
++    [Fact]
++    public void ToExcel_ContainsTheSheetsAndTheStandings()
++    {
++        byte[] file = ReportExporter.ToExcel(SampleData());
++
++        using MemoryStream stream = new MemoryStream(file);
++        using XLWorkbook workbook = new XLWorkbook(stream);
++
++        Assert.True(workbook.Worksheets.Contains("Класиране"));
++        Assert.True(workbook.Worksheets.Contains("Мачове"));
++        Assert.True(workbook.Worksheets.Contains("Отбори"));
++
++        IXLWorksheet standings = workbook.Worksheet("Класиране");
++
++        // row 1 = headers, row 2 = the leader
++        Assert.Equal("Alpha", standings.Cell(2, 2).GetString());
++
++        // points are a real number, not text
++        Assert.Equal(3, standings.Cell(2, 10).GetDouble());
++    }
++
++    [Fact]
++    public void ToExcel_WorksWithoutAnyData()
++    {
++        byte[] file = ReportExporter.ToExcel(new ReportData());
++
++        // an .xlsx is a zip archive: starts with "PK"
++        Assert.Equal("PK", System.Text.Encoding.ASCII.GetString(file, 0, 2));
++    }
++}
+diff --git a/GamingTournament.Tests/ReportServiceTests.cs b/GamingTournament.Tests/ReportServiceTests.cs
+new file mode 100644
+index 0000000..4fb6870
+--- /dev/null
++++ b/GamingTournament.Tests/ReportServiceTests.cs
+@@ -0,0 +1,292 @@
++using GamingTournament.Models;
++using GamingTournament.Services;
++
++namespace GamingTournament.Tests;
++
++public class ReportServiceTests
++{
++    // ----- BuildStandings: pure logic, no database -----
++
++    private static Match Finished(
++        int home, int away, int homeScore, int awayScore)
++    {
++        return new Match
++        {
++            HomeTeamId = home,
++            AwayTeamId = away,
++            HomeScore = homeScore,
++            AwayScore = awayScore,
++            Status = MatchStatus.Finished
++        };
++    }
++
++    [Fact]
++    public void BuildStandings_WinIsThreePoints_DrawIsOne()
++    {
++        List<Match> matches = new List<Match>
++        {
++            Finished(1, 2, 3, 1), // team 1 wins
++            Finished(1, 3, 2, 2)  // draw
++        };
++
++        List<StandingRow> table = ReportService.BuildStandings(matches);
++
++        StandingRow first = table.Single(row => row.TeamId == 1);
++
++        Assert.Equal(2, first.Played);
++        Assert.Equal(1, first.Wins);
++        Assert.Equal(1, first.Draws);
++        Assert.Equal(4, first.Points);
++        Assert.Equal(5, first.GoalsFor);
++        Assert.Equal(3, first.GoalsAgainst);
++
++        Assert.Equal(1, table.Single(row => row.TeamId == 3).Points);
++        Assert.Equal(0, table.Single(row => row.TeamId == 2).Points);
++    }
++
++    [Fact]
++    public void BuildStandings_SortsByPointsThenGoalDifference()
++    {
++        // 1 and 2 both win once, but team 2 wins by more goals
++        List<Match> matches = new List<Match>
++        {
++            Finished(1, 3, 1, 0),
++            Finished(2, 4, 5, 0)
++        };
++
++        List<StandingRow> table = ReportService.BuildStandings(matches);
++
++        Assert.Equal(2, table[0].TeamId);
++        Assert.Equal(1, table[1].TeamId);
++    }
++
++    [Fact]
++    public void BuildStandings_CancelledMatchIsIgnored()
++    {
++        List<Match> matches = new List<Match>
++        {
++            new Match
++            {
++                HomeTeamId = 1,
++                AwayTeamId = 2,
++                Status = MatchStatus.Cancelled
++            }
++        };
++
++        Assert.Empty(ReportService.BuildStandings(matches));
++    }
++
++    [Fact]
++    public void BuildStandings_ScheduledMatchAddsTeamsWithZeroPlayed()
++    {
++        List<Match> matches = new List<Match>
++        {
++            new Match { HomeTeamId = 1, AwayTeamId = 2 }
++        };
++
++        List<StandingRow> table = ReportService.BuildStandings(matches);
++
++        Assert.Equal(2, table.Count);
++        Assert.All(table, row => Assert.Equal(0, row.Played));
++    }
++
++    [Fact]
++    public void BuildStandings_UsesTeamNameWhenLoaded()
++    {
++        Match match = Finished(1, 2, 1, 0);
++        match.HomeTeam = new Team { Id = 1, Name = "Alpha" };
++
++        List<StandingRow> table =
++            ReportService.BuildStandings(new[] { match });
++
++        Assert.Equal("Alpha", table.Single(row => row.TeamId == 1).TeamName);
++    }
++
++    // ----- queries: real SQL on in-memory SQLite -----
++
++    private static Tournament NewTournament(string name, string game)
++    {
++        return new Tournament
++        {
++            Name = name,
++            Game = game,
++            StartDate = new DateTime(2026, 1, 1),
++            EndDate = new DateTime(2026, 12, 31)
++        };
++    }
++
++    [Fact]
++    public async Task GetMatchesByMonth_CountsOnlyFinishedMatches()
++    {
++        using TestDb db = new TestDb();
++
++        Tournament tournament = NewTournament("Cup", "CS2");
++        Team alpha = new Team { Name = "Alpha" };
++        Team beta = new Team { Name = "Beta" };
++
++        db.Context.AddRange(tournament, alpha, beta);
++        db.Context.SaveChanges();
++
++        void AddMatch(DateTime when, MatchStatus status)
++        {
++            Match match = new Match
++            {
++                TournamentId = tournament.Id,
++                HomeTeamId = alpha.Id,
++                AwayTeamId = beta.Id,
++                ScheduledOn = when,
++                Status = status
++            };
++
++            if (status == MatchStatus.Finished)
++            {
++                match.HomeScore = 1;
++                match.AwayScore = 0;
++            }
++
++            db.Context.Matches.Add(match);
++        }
++
++        AddMatch(new DateTime(2026, 1, 5, 18, 0, 0), MatchStatus.Finished);
++        AddMatch(new DateTime(2026, 1, 20, 18, 0, 0), MatchStatus.Finished);
++        AddMatch(new DateTime(2026, 2, 3, 18, 0, 0), MatchStatus.Finished);
++        AddMatch(new DateTime(2026, 2, 9, 18, 0, 0), MatchStatus.Scheduled);
++        db.Context.SaveChanges();
++
++        ReportService service = new ReportService(db.Context);
++
++        List<MonthlyCount> months = await service.GetMatchesByMonthAsync();
++
++        Assert.Equal(2, months.Count);
++        Assert.Equal(new DateTime(2026, 1, 1), months[0].Month);
++        Assert.Equal(2, months[0].Count);
++        Assert.Equal(new DateTime(2026, 2, 1), months[1].Month);
++        Assert.Equal(1, months[1].Count);
++        Assert.Equal("01.2026", months[0].Label);
++    }
++
++    [Fact]
++    public async Task GetGameStats_GroupsTournamentsByGame()
++    {
++        using TestDb db = new TestDb();
++
++        Team alpha = new Team { Name = "Alpha" };
++        Team beta = new Team { Name = "Beta" };
++        Tournament first = NewTournament("Cup 1", "CS2");
++        Tournament second = NewTournament("Cup 2", "CS2");
++        Tournament third = NewTournament("Cup 3", "Dota 2");
++
++        db.Context.AddRange(alpha, beta, first, second, third);
++        db.Context.SaveChanges();
++
++        db.Context.Matches.AddRange(
++            new Match
++            {
++                TournamentId = first.Id,
++                HomeTeamId = alpha.Id,
++                AwayTeamId = beta.Id,
++                ScheduledOn = new DateTime(2026, 3, 1, 18, 0, 0)
++            },
++            new Match
++            {
++                TournamentId = second.Id,
++                HomeTeamId = alpha.Id,
++                AwayTeamId = beta.Id,
++                ScheduledOn = new DateTime(2026, 4, 1, 18, 0, 0)
++            },
++            new Match
++            {
++                TournamentId = third.Id,
++                HomeTeamId = alpha.Id,
++                AwayTeamId = beta.Id,
++                ScheduledOn = new DateTime(2026, 5, 1, 18, 0, 0),
++                Status = MatchStatus.Cancelled
++            });
++        db.Context.SaveChanges();
++
++        List<GameStat> games =
++            await new ReportService(db.Context).GetGameStatsAsync();
++
++        Assert.Equal(2, games.Count);
++
++        // most matches first; the cancelled match is not counted
++        Assert.Equal("CS2", games[0].Game);
++        Assert.Equal(2, games[0].Tournaments);
++        Assert.Equal(2, games[0].Matches);
++
++        Assert.Equal("Dota 2", games[1].Game);
++        Assert.Equal(0, games[1].Matches);
++    }
++
++    [Fact]
++    public async Task GetRequestsByMonth_CombinesPlayerAndCoachRequests()
++    {
++        using TestDb db = new TestDb();
++
++        Team team = new Team { Name = "Alpha" };
++        ApplicationUser player = new ApplicationUser
++        {
++            UserName = "player@test.com",
++            Email = "player@test.com"
++        };
++
++        db.Context.AddRange(team, player);
++        db.Context.SaveChanges();
++
++        db.Context.TeamJoinRequests.Add(new TeamJoinRequest
++        {
++            PlayerId = player.Id,
++            TeamId = team.Id,
++            Status = "Approved",
++            CreatedOn = new DateTime(2026, 1, 5)
++        });
++
++        db.Context.CoachRequests.Add(new CoachRequest
++        {
++            PlayerId = player.Id,
++            TeamId = team.Id,
++            Status = "Rejected",
++            CreatedOn = new DateTime(2026, 1, 9)
++        });
++        db.Context.SaveChanges();
++
++        List<RequestMonthStat> months =
++            await new ReportService(db.Context).GetRequestsByMonthAsync();
++
++        RequestMonthStat january = Assert.Single(months);
++
++        Assert.Equal(1, january.Approved);
++        Assert.Equal(1, january.Rejected);
++        Assert.Equal(0, january.Pending);
++    }
++
++    [Fact]
++    public async Task Build_WithoutId_SelectsTheNewestTournament()
++    {
++        using TestDb db = new TestDb();
++
++        Tournament older = NewTournament("Old Cup", "CS2");
++        Tournament newer = NewTournament("New Cup", "CS2");
++        newer.StartDate = new DateTime(2026, 6, 1);
++
++        db.Context.AddRange(older, newer);
++        db.Context.SaveChanges();
++
++        ReportData data =
++            await new ReportService(db.Context).BuildAsync(null);
++
++        Assert.Equal("New Cup", data.SelectedTournament!.Name);
++    }
++
++    [Fact]
++    public async Task Build_UnknownTournamentId_SelectsNothing()
++    {
++        using TestDb db = new TestDb();
++
++        ReportData data =
++            await new ReportService(db.Context).BuildAsync(999);
++
++        Assert.Null(data.SelectedTournament);
++        Assert.Empty(data.Standings);
++    }
++}
+diff --git a/GamingTournament.Tests/TestDb.cs b/GamingTournament.Tests/TestDb.cs
+new file mode 100644
+index 0000000..0a62ba9
+--- /dev/null
++++ b/GamingTournament.Tests/TestDb.cs
+@@ -0,0 +1,36 @@
++using GamingTournament.Data;
++using Microsoft.Data.Sqlite;
++using Microsoft.EntityFrameworkCore;
++
++namespace GamingTournament.Tests;
++
++// in-memory SQLite, the same idea as in MatchesControllerTests:
++// unlike the EF InMemory provider it enforces the CHECK constraints,
++// unique indexes and foreign keys of the real database.
++// The database lives as long as the connection is open.
++public sealed class TestDb : IDisposable
++{
++    public SqliteConnection Connection { get; }
++
++    public ApplicationDbContext Context { get; }
++
++    public TestDb()
++    {
++        Connection = new SqliteConnection("DataSource=:memory:");
++        Connection.Open();
++
++        DbContextOptions<ApplicationDbContext> options =
++            new DbContextOptionsBuilder<ApplicationDbContext>()
++                .UseSqlite(Connection)
++                .Options;
++
++        Context = new ApplicationDbContext(options);
++        Context.Database.EnsureCreated();
++    }
++
++    public void Dispose()
++    {
++        Context.Dispose();
++        Connection.Dispose();
++    }
++}
+diff --git a/GamingTournament.Tests/TournamentsControllerTests.cs b/GamingTournament.Tests/TournamentsControllerTests.cs
+new file mode 100644
+index 0000000..b376208
+--- /dev/null
++++ b/GamingTournament.Tests/TournamentsControllerTests.cs
+@@ -0,0 +1,217 @@
++using GamingTournament.Controllers;
++using GamingTournament.Models;
++using Microsoft.AspNetCore.Http;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.AspNetCore.Mvc.ViewFeatures;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.Logging.Abstractions;
++
++namespace GamingTournament.Tests;
++
++// GenerateMatches: round-robin schedule inside a transaction
++public class TournamentsControllerTests
++{
++    private static TournamentsController CreateController(TestDb db)
++    {
++        TournamentsController controller = new TournamentsController(
++            db.Context,
++            NullLogger<TournamentsController>.Instance);
++
++        // FakeTempDataProvider lives in MatchesControllerTests.cs
++        controller.TempData = new TempDataDictionary(
++            new DefaultHttpContext(), new FakeTempDataProvider());
++
++        return controller;
++    }
++
++    private static Tournament AddTournament(
++        TestDb db, string name, int days)
++    {
++        Tournament tournament = new Tournament
++        {
++            Name = name,
++            Game = "CS2",
++            StartDate = new DateTime(2026, 1, 1),
++            EndDate = new DateTime(2026, 1, 1).AddDays(days - 1)
++        };
++
++        db.Context.Tournaments.Add(tournament);
++        db.Context.SaveChanges();
++
++        return tournament;
++    }
++
++    private static List<Team> AddTeams(TestDb db, int count)
++    {
++        List<Team> teams = Enumerable.Range(1, count)
++            .Select(number => new Team { Name = "Team " + number })
++            .ToList();
++
++        db.Context.Teams.AddRange(teams);
++        db.Context.SaveChanges();
++
++        return teams;
++    }
++
++    [Fact]
++    public async Task GenerateMatches_FourTeams_EveryPairPlaysOnce()
++    {
++        using TestDb db = new TestDb();
++        Tournament tournament = AddTournament(db, "Cup", days: 10);
++        AddTeams(db, 4);
++
++        IActionResult result = await CreateController(db)
++            .GenerateMatches(tournament.Id);
++
++        Assert.IsType<RedirectToActionResult>(result);
++
++        List<Match> matches = await db.Context.Matches.ToListAsync();
++
++        // 4 teams -> 6 different pairs
++        Assert.Equal(6, matches.Count);
++
++        int distinctPairs = matches
++            .Select(match => (
++                Math.Min(match.HomeTeamId, match.AwayTeamId),
++                Math.Max(match.HomeTeamId, match.AwayTeamId)))
++            .Distinct()
++            .Count();
++
++        Assert.Equal(6, distinctPairs);
++
++        // all inside the tournament dates, nobody plays against himself
++        Assert.All(matches, match =>
++        {
++            Assert.True(match.ScheduledOn.Date >= tournament.StartDate);
++            Assert.True(match.ScheduledOn.Date <= tournament.EndDate);
++            Assert.NotEqual(match.HomeTeamId, match.AwayTeamId);
++            Assert.Equal(MatchStatus.Scheduled, match.Status);
++        });
++    }
++
++    [Fact]
++    public async Task GenerateMatches_NoTeamPlaysTwiceAtTheSameTime()
++    {
++        using TestDb db = new TestDb();
++        Tournament tournament = AddTournament(db, "Cup", days: 10);
++        AddTeams(db, 6);
++
++        await CreateController(db).GenerateMatches(tournament.Id);
++
++        List<Match> matches = await db.Context.Matches.ToListAsync();
++
++        // (team, time) pairs: home and away side together
++        var slots = matches
++            .SelectMany(match => new[]
++            {
++                (match.HomeTeamId, match.ScheduledOn),
++                (match.AwayTeamId, match.ScheduledOn)
++            })
++            .ToList();
++
++        Assert.Equal(slots.Count, slots.Distinct().Count());
++    }
++
++    [Fact]
++    public async Task GenerateMatches_OddNumberOfTeams_OneRestsEachRound()
++    {
++        using TestDb db = new TestDb();
++        Tournament tournament = AddTournament(db, "Cup", days: 10);
++        AddTeams(db, 5);
++
++        await CreateController(db).GenerateMatches(tournament.Id);
++
++        // 5 teams -> 10 pairs
++        Assert.Equal(10, await db.Context.Matches.CountAsync());
++    }
++
++    [Fact]
++    public async Task GenerateMatches_TournamentTooShort_SavesNothing()
++    {
++        using TestDb db = new TestDb();
++
++        // 8 teams need 7 rounds; one day fits at most 3
++        Tournament tournament = AddTournament(db, "Short Cup", days: 1);
++        AddTeams(db, 8);
++
++        TournamentsController controller = CreateController(db);
++
++        await controller.GenerateMatches(tournament.Id);
++
++        Assert.Equal(0, await db.Context.Matches.CountAsync());
++        Assert.NotNull(controller.TempData["ErrorMessage"]);
++    }
++
++    [Fact]
++    public async Task GenerateMatches_TournamentAlreadyHasMatches_IsRefused()
++    {
++        using TestDb db = new TestDb();
++        Tournament tournament = AddTournament(db, "Cup", days: 10);
++        List<Team> teams = AddTeams(db, 4);
++
++        db.Context.Matches.Add(new Match
++        {
++            TournamentId = tournament.Id,
++            HomeTeamId = teams[0].Id,
++            AwayTeamId = teams[1].Id,
++            ScheduledOn = new DateTime(2026, 1, 3, 18, 0, 0)
++        });
++        db.Context.SaveChanges();
++
++        TournamentsController controller = CreateController(db);
++
++        await controller.GenerateMatches(tournament.Id);
++
++        Assert.Equal(1, await db.Context.Matches.CountAsync());
++        Assert.NotNull(controller.TempData["ErrorMessage"]);
++    }
++
++    [Fact]
++    public async Task GenerateMatches_UnknownTournament_ReturnsNotFound()
++    {
++        using TestDb db = new TestDb();
++        AddTeams(db, 4);
++
++        IActionResult result =
++            await CreateController(db).GenerateMatches(999);
++
++        Assert.IsType<NotFoundResult>(result);
++    }
++
++    // the transaction test: round 1 is already saved when round 2
++    // hits a conflict - the whole schedule must be rolled back
++    [Fact]
++    public async Task GenerateMatches_ConflictInLaterRound_RollsBackEverything()
++    {
++        using TestDb db = new TestDb();
++
++        Tournament tournament = AddTournament(db, "Winter Cup", days: 10);
++        Tournament other = AddTournament(db, "Other Cup", days: 10);
++        List<Team> teams = AddTeams(db, 4);
++
++        // Team 1 already plays on day 2 at 18:00 (the time of round 2)
++        db.Context.Matches.Add(new Match
++        {
++            TournamentId = other.Id,
++            HomeTeamId = teams[0].Id,
++            AwayTeamId = teams[1].Id,
++            ScheduledOn = new DateTime(2026, 1, 2, 18, 0, 0)
++        });
++        db.Context.SaveChanges();
++
++        TournamentsController controller = CreateController(db);
++
++        IActionResult result =
++            await controller.GenerateMatches(tournament.Id);
++
++        Assert.IsType<RedirectToActionResult>(result);
++        Assert.NotNull(controller.TempData["ErrorMessage"]);
++
++        // round 1 was saved first, but the rollback removed it again
++        Assert.Equal(0, await db.Context.Matches
++            .CountAsync(match => match.TournamentId == tournament.Id));
++
++        // only the match that existed before is left
++        Assert.Equal(1, await db.Context.Matches.CountAsync());
++    }
++}
+diff --git a/GamingTournament/Controllers/ErrorLogsController.cs b/GamingTournament/Controllers/ErrorLogsController.cs
+new file mode 100644
+index 0000000..0a9f598
+--- /dev/null
++++ b/GamingTournament/Controllers/ErrorLogsController.cs
+@@ -0,0 +1,65 @@
++using GamingTournament.Data;
++using GamingTournament.Models;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++
++namespace GamingTournament.Controllers;
++
++// the error journal is for the administrator only
++[Authorize(Roles = "Admin")]
++public class ErrorLogsController : Controller
++{
++    private const int PageSize = 10;
++
++    private readonly ApplicationDbContext _context;
++
++    public ErrorLogsController(ApplicationDbContext context)
++    {
++        _context = context;
++    }
++
++    public async Task<IActionResult> Index(int page = 1)
++    {
++        int totalLogs = await _context.ErrorLogs.CountAsync();
++
++        // round up, same idea as the teams list
++        int totalPages = (totalLogs + PageSize - 1) / PageSize;
++
++        if (page < 1)
++        {
++            page = 1;
++        }
++
++        if (page > totalPages && totalPages > 0)
++        {
++            page = totalPages;
++        }
++
++        List<ErrorLog> logs = await _context.ErrorLogs
++            .AsNoTracking()
++            .OrderByDescending(log => log.CreatedOn)
++            .ThenByDescending(log => log.Id)
++            .Skip((page - 1) * PageSize)
++            .Take(PageSize)
++            .ToListAsync();
++
++        ViewBag.CurrentPage = page;
++        ViewBag.TotalPages = totalPages;
++        ViewBag.TotalLogs = totalLogs;
++
++        return View(logs);
++    }
++
++    [HttpPost]
++    [ValidateAntiForgeryToken]
++    public async Task<IActionResult> Clear()
++    {
++        await _context.ErrorLogs.ExecuteDeleteAsync();
++
++        TempData["SuccessMessage"] =
++            "Журналът на грешките беше изчистен.";
++
++        return RedirectToAction(nameof(Index));
++    }
++}
+diff --git a/GamingTournament/Controllers/HomeController.cs b/GamingTournament/Controllers/HomeController.cs
+index 43cd95b..13049be 100644
+--- a/GamingTournament/Controllers/HomeController.cs
++++ b/GamingTournament/Controllers/HomeController.cs
+@@ -2,6 +2,7 @@ using System.Diagnostics;
+ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.EntityFrameworkCore;
+ using GamingTournament.Data;
++using GamingTournament.Middleware;
+ using GamingTournament.Models;
+ 
+ namespace GamingTournament.Controllers;
+@@ -69,9 +70,66 @@ public class HomeController : Controller
+         return View();
+     }
+ 
++    // 500 / 409: ExceptionHandlingMiddleware re-runs the request
++    // here and leaves the prepared model in HttpContext.Items
+     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
+     public IActionResult Error()
+     {
+-        return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
++        ErrorViewModel model =
++            HttpContext.Items[ExceptionHandlingMiddleware.ErrorItemKey]
++                as ErrorViewModel
++            ?? new ErrorViewModel
++            {
++                RequestId = HttpContext.TraceIdentifier
++            };
++
++        Response.StatusCode = model.StatusCode;
++
++        return View(model);
++    }
++
++    // 404, 403 and the rest: UseStatusCodePagesWithReExecute
++    // sends them here (named HttpStatus, because Controller
++    // already has a method called StatusCode)
++    [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
++    public IActionResult HttpStatus(int code)
++    {
++        Response.StatusCode = code;
++
++        ErrorViewModel model = new ErrorViewModel
++        {
++            RequestId = HttpContext.TraceIdentifier,
++            StatusCode = code
++        };
++
++        switch (code)
++        {
++            case 404:
++                return View("NotFound", model);
++
++            case 403:
++                return View("Forbidden", model);
++
++            default:
++                model.Title = "Грешка " + code;
++                model.Message =
++                    "Заявката не можа да бъде обработена.";
++
++                return View("Error", model);
++        }
++    }
++
++    // Development only: lets you see the 500 page on demand
++    // (in Production the route simply doesn't exist -> 404)
++    public IActionResult Crash(
++        [FromServices] IHostEnvironment environment)
++    {
++        if (!environment.IsDevelopment())
++        {
++            return NotFound();
++        }
++
++        throw new InvalidOperationException(
++            "Тестова грешка от /Home/Crash.");
+     }
+ }
+\ No newline at end of file
+diff --git a/GamingTournament/Controllers/ReportsController.cs b/GamingTournament/Controllers/ReportsController.cs
+new file mode 100644
+index 0000000..17f96ac
+--- /dev/null
++++ b/GamingTournament/Controllers/ReportsController.cs
+@@ -0,0 +1,86 @@
++using GamingTournament.Models;
++using GamingTournament.Services;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++
++namespace GamingTournament.Controllers;
++
++// statistics and exports - only for the administrator
++[Authorize(Roles = "Admin")]
++public class ReportsController : Controller
++{
++    private const string ExcelContentType =
++        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
++
++    private readonly IReportService _reports;
++
++    private readonly ILogger<ReportsController> _logger;
++
++    public ReportsController(
++        IReportService reports,
++        ILogger<ReportsController> logger)
++    {
++        _reports = reports;
++        _logger = logger;
++    }
++
++    // tournamentId: which tournament the table and the match list
++    // are about; without it the newest tournament is used
++    public async Task<IActionResult> Index(int? tournamentId)
++    {
++        ReportData data = await _reports.BuildAsync(tournamentId);
++
++        if (tournamentId != null && data.SelectedTournament == null)
++        {
++            return NotFound();
++        }
++
++        return View(data);
++    }
++
++    public async Task<IActionResult> ExportPdf(int? tournamentId)
++    {
++        ReportData data = await _reports.BuildAsync(tournamentId);
++
++        if (tournamentId != null && data.SelectedTournament == null)
++        {
++            return NotFound();
++        }
++
++        byte[] file = ReportExporter.ToPdf(data);
++
++        _logger.LogInformation(
++            "Експорт PDF: {User}, турнир {TournamentId}, {Bytes} байта",
++            User.Identity?.Name,
++            data.SelectedTournament?.Id,
++            file.Length);
++
++        return File(
++            file,
++            "application/pdf",
++            $"report-{DateTime.Now:yyyyMMdd-HHmm}.pdf");
++    }
++
++    public async Task<IActionResult> ExportExcel(int? tournamentId)
++    {
++        ReportData data = await _reports.BuildAsync(tournamentId);
++
++        if (tournamentId != null && data.SelectedTournament == null)
++        {
++            return NotFound();
++        }
++
++        byte[] file = ReportExporter.ToExcel(data);
++
++        _logger.LogInformation(
++            "Експорт Excel: {User}, турнир {TournamentId}, {Bytes} байта",
++            User.Identity?.Name,
++            data.SelectedTournament?.Id,
++            file.Length);
++
++        return File(
++            file,
++            ExcelContentType,
++            $"report-{DateTime.Now:yyyyMMdd-HHmm}.xlsx");
++    }
++}
+diff --git a/GamingTournament/Controllers/TeamsController.cs b/GamingTournament/Controllers/TeamsController.cs
+index 8c40a76..e0dea1c 100644
+--- a/GamingTournament/Controllers/TeamsController.cs
++++ b/GamingTournament/Controllers/TeamsController.cs
+@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
+ using Microsoft.AspNetCore.Identity;
+ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Storage;
+ 
+ namespace GamingTournament.Controllers;
+ 
+@@ -14,12 +15,16 @@ public class TeamsController : Controller
+     private readonly UserManager<ApplicationUser>
+         _userManager;
+ 
++    private readonly ILogger<TeamsController> _logger;
++
+     public TeamsController(
+         ApplicationDbContext context,
+-        UserManager<ApplicationUser> userManager)
++        UserManager<ApplicationUser> userManager,
++        ILogger<TeamsController> logger)
+     {
+         _context = context;
+         _userManager = userManager;
++        _logger = logger;
+     }
+ 
+     [AllowAnonymous]
+@@ -301,25 +306,53 @@ public class TeamsController : Controller
+             );
+         }
+ 
+-        request.Player.TeamId = request.TeamId;
+-        request.Status = "Approved";
++        // Транзакция: двете записа вървят заедно - или играчът е в
++        // отбора И другите му заявки са отхвърлени, или нищо не се
++        // променя. Без нея срив между тях оставя играч в отбора
++        // с все още "чакащи" заявки към други отбори
++        await using IDbContextTransaction transaction =
++            await _context.Database.BeginTransactionAsync();
+ 
+-        List<TeamJoinRequest> otherRequests =
+-            await _context.TeamJoinRequests
+-                .Where(item =>
+-                    item.PlayerId ==
+-                    request.PlayerId &&
+-                    item.Id != request.Id &&
+-                    item.Status == "Pending")
+-                .ToListAsync();
++        try
++        {
++            request.Player.TeamId = request.TeamId;
++            request.Status = "Approved";
++
++            await _context.SaveChangesAsync();
++
++            List<TeamJoinRequest> otherRequests =
++                await _context.TeamJoinRequests
++                    .Where(item =>
++                        item.PlayerId ==
++                        request.PlayerId &&
++                        item.Id != request.Id &&
++                        item.Status == "Pending")
++                    .ToListAsync();
++
++            foreach (TeamJoinRequest otherRequest
++                     in otherRequests)
++            {
++                otherRequest.Status = "Rejected";
++            }
+ 
+-        foreach (TeamJoinRequest otherRequest
+-                 in otherRequests)
++            await _context.SaveChangesAsync();
++
++            await transaction.CommitAsync();
++        }
++        catch
+         {
+-            otherRequest.Status = "Rejected";
++            // връща и първия запис; грешката отива към
++            // ExceptionHandlingMiddleware (лог + страница 500)
++            await transaction.RollbackAsync();
++
++            throw;
+         }
+ 
+-        await _context.SaveChangesAsync();
++        _logger.LogInformation(
++            "Заявка {RequestId} одобрена: играч {PlayerId} е в отбор {TeamId}",
++            request.Id,
++            request.PlayerId,
++            request.TeamId);
+ 
+         TempData["SuccessMessage"] =
+             "Играчът беше добавен към отбора.";
+@@ -512,41 +545,65 @@ public class TeamsController : Controller
+             );
+         }
+ 
+-        request.Team.CoachId = request.PlayerId;
+-        request.Status = "Approved";
+-
+-        // Другите чакащи заявки за треньор на този
+-        // потребител и към този отбор вече са невалидни
+-        List<CoachRequest> otherCoachRequests =
+-            await _context.CoachRequests
+-                .Where(item =>
+-                    item.Id != request.Id &&
+-                    item.Status == "Pending" &&
+-                    (item.PlayerId == request.PlayerId ||
+-                     item.TeamId == request.TeamId))
+-                .ToListAsync();
++        // Транзакция: назначаването на треньора и отхвърлянето на
++        // всички останали заявки са една операция - всичко или нищо
++        await using IDbContextTransaction transaction =
++            await _context.Database.BeginTransactionAsync();
+ 
+-        foreach (CoachRequest otherRequest
+-                 in otherCoachRequests)
++        try
+         {
+-            otherRequest.Status = "Rejected";
+-        }
++            request.Team.CoachId = request.PlayerId;
++            request.Status = "Approved";
+ 
+-        // Треньорът не може да стане играч
+-        List<TeamJoinRequest> joinRequests =
+-            await _context.TeamJoinRequests
+-                .Where(item =>
+-                    item.PlayerId == request.PlayerId &&
+-                    item.Status == "Pending")
+-                .ToListAsync();
++            await _context.SaveChangesAsync();
++
++            // Другите чакащи заявки за треньор на този
++            // потребител и към този отбор вече са невалидни
++            List<CoachRequest> otherCoachRequests =
++                await _context.CoachRequests
++                    .Where(item =>
++                        item.Id != request.Id &&
++                        item.Status == "Pending" &&
++                        (item.PlayerId == request.PlayerId ||
++                         item.TeamId == request.TeamId))
++                    .ToListAsync();
++
++            foreach (CoachRequest otherRequest
++                     in otherCoachRequests)
++            {
++                otherRequest.Status = "Rejected";
++            }
++
++            // Треньорът не може да стане играч
++            List<TeamJoinRequest> joinRequests =
++                await _context.TeamJoinRequests
++                    .Where(item =>
++                        item.PlayerId == request.PlayerId &&
++                        item.Status == "Pending")
++                    .ToListAsync();
+ 
+-        foreach (TeamJoinRequest joinRequest
+-                 in joinRequests)
++            foreach (TeamJoinRequest joinRequest
++                     in joinRequests)
++            {
++                joinRequest.Status = "Rejected";
++            }
++
++            await _context.SaveChangesAsync();
++
++            await transaction.CommitAsync();
++        }
++        catch
+         {
+-            joinRequest.Status = "Rejected";
++            await transaction.RollbackAsync();
++
++            throw;
+         }
+ 
+-        await _context.SaveChangesAsync();
++        _logger.LogInformation(
++            "Заявка за треньор {RequestId} одобрена: {PlayerId} води отбор {TeamId}",
++            request.Id,
++            request.PlayerId,
++            request.TeamId);
+ 
+         TempData["SuccessMessage"] =
+             "Треньорът беше одобрен.";
+diff --git a/GamingTournament/Controllers/TournamentsController.cs b/GamingTournament/Controllers/TournamentsController.cs
+index c04b08b..4dae09c 100644
+--- a/GamingTournament/Controllers/TournamentsController.cs
++++ b/GamingTournament/Controllers/TournamentsController.cs
+@@ -3,17 +3,31 @@ using GamingTournament.Models;
+ using Microsoft.AspNetCore.Authorization;
+ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Storage;
+ 
+ namespace GamingTournament.Controllers;
+ 
+ // everyone sees the tournaments, only Admin creates them
+ public class TournamentsController : Controller
+ {
++    // generated matches: first round at 18:00, more rounds
++    // on the same day follow every 2 hours (18:00, 20:00, 22:00)
++    private const int FirstMatchHour = 18;
++
++    private const int HoursBetweenRounds = 2;
++
++    private const int MaxRoundsPerDay = 3;
++
+     private readonly ApplicationDbContext _context;
+ 
+-    public TournamentsController(ApplicationDbContext context)
++    private readonly ILogger<TournamentsController> _logger;
++
++    public TournamentsController(
++        ApplicationDbContext context,
++        ILogger<TournamentsController> logger)
+     {
+         _context = context;
++        _logger = logger;
+     }
+ 
+     [AllowAnonymous]
+@@ -82,4 +96,187 @@ public class TournamentsController : Controller
+ 
+         return RedirectToAction(nameof(Index));
+     }
++
++    // Създава програмата "всеки срещу всеки" за всички отбори.
++    // Критична операция с транзакция: ако един кръг не може да се
++    // запише (например отбор има друг мач в същия час), се връщат
++    // и вече записаните кръгове - няма наполовина генерирана програма
++    [Authorize(Roles = "Admin")]
++    [HttpPost]
++    [ValidateAntiForgeryToken]
++    public async Task<IActionResult> GenerateMatches(int id)
++    {
++        Tournament? tournament = await _context.Tournaments
++            .FindAsync(id);
++
++        if (tournament == null)
++        {
++            return NotFound();
++        }
++
++        bool hasMatches = await _context.Matches
++            .AnyAsync(match => match.TournamentId == id);
++
++        if (hasMatches)
++        {
++            TempData["ErrorMessage"] =
++                "Турнирът вече има мачове - програмата не може да се генерира отново.";
++
++            return RedirectToAction(nameof(Index));
++        }
++
++        List<int> teamIds = await _context.Teams
++            .OrderBy(team => team.Name)
++            .Select(team => team.Id)
++            .ToListAsync();
++
++        if (teamIds.Count < 2)
++        {
++            TempData["ErrorMessage"] =
++                "Трябват поне два отбора, за да се генерира програма.";
++
++            return RedirectToAction(nameof(Index));
++        }
++
++        // EndDate is the whole last day, so +1
++        int days = (tournament.EndDate.Date - tournament.StartDate.Date)
++            .Days + 1;
++
++        await using IDbContextTransaction transaction =
++            await _context.Database.BeginTransactionAsync();
++
++        try
++        {
++            string? error = await CreateRoundRobinAsync(
++                tournament, teamIds, days);
++
++            if (error != null)
++            {
++                await transaction.RollbackAsync();
++
++                TempData["ErrorMessage"] = error;
++
++                return RedirectToAction(nameof(Index));
++            }
++
++            await transaction.CommitAsync();
++        }
++        catch
++        {
++            await transaction.RollbackAsync();
++
++            throw;
++        }
++
++        int matchCount = teamIds.Count * (teamIds.Count - 1) / 2;
++
++        _logger.LogInformation(
++            "Генерирана програма за турнир {TournamentId}: {Teams} отбора, {Matches} мача",
++            id,
++            teamIds.Count,
++            matchCount);
++
++        TempData["SuccessMessage"] =
++            $"Генерирани са {matchCount} мача.";
++
++        return RedirectToAction(nameof(Index));
++    }
++
++    // Circle method: the first team stays, the others rotate one
++    // place every round. With an odd number of teams one slot is
++    // empty (null) - the team facing it rests that round.
++    // Returns an error text, or null when everything is saved.
++    private async Task<string?> CreateRoundRobinAsync(
++        Tournament tournament,
++        List<int> teamIds,
++        int days)
++    {
++        List<int?> slots = teamIds
++            .Select(teamId => (int?)teamId)
++            .ToList();
++
++        if (slots.Count % 2 == 1)
++        {
++            slots.Add(null);
++        }
++
++        int count = slots.Count;
++        int rounds = count - 1;
++
++        // round up: 7 rounds in 3 days -> 3 rounds per day
++        int roundsPerDay = (rounds + days - 1) / days;
++
++        if (roundsPerDay > MaxRoundsPerDay)
++        {
++            return $"Турнирът е твърде кратък: за {teamIds.Count} отбора " +
++                   $"трябват {rounds} кръга, а има само {days} дни.";
++        }
++
++        for (int round = 0; round < rounds; round++)
++        {
++            DateTime scheduledOn = tournament.StartDate.Date
++                .AddDays(round / roundsPerDay)
++                .AddHours(FirstMatchHour +
++                          round % roundsPerDay * HoursBetweenRounds);
++
++            for (int i = 0; i < count / 2; i++)
++            {
++                int? home = slots[i];
++                int? away = slots[count - 1 - i];
++
++                // the empty slot: this team has no match this round
++                if (home == null || away == null)
++                {
++                    continue;
++                }
++
++                // the first team would always be at home otherwise
++                if (i == 0 && round % 2 == 1)
++                {
++                    (home, away) = (away, home);
++                }
++
++                int homeTeamId = home.Value;
++                int awayTeamId = away.Value;
++
++                // same rule as MatchesController.Create:
++                // a team can't play two matches at the same moment
++                bool timeTaken = await _context.Matches
++                    .AnyAsync(match =>
++                        match.Status == MatchStatus.Scheduled &&
++                        match.ScheduledOn == scheduledOn &&
++                        (match.HomeTeamId == homeTeamId ||
++                         match.AwayTeamId == homeTeamId ||
++                         match.HomeTeamId == awayTeamId ||
++                         match.AwayTeamId == awayTeamId));
++
++                if (timeTaken)
++                {
++                    return "Отбор вече има мач на " +
++                           $"{scheduledOn:dd.MM.yyyy HH:mm}. " +
++                           "Нищо не е записано.";
++                }
++
++                _context.Matches.Add(new Match
++                {
++                    TournamentId = tournament.Id,
++                    HomeTeamId = homeTeamId,
++                    AwayTeamId = awayTeamId,
++                    ScheduledOn = scheduledOn
++                });
++            }
++
++            // one save per round: a problem in round 3 has to undo
++            // rounds 1 and 2 too - that is what the transaction is for
++            await _context.SaveChangesAsync();
++
++            // rotate: the last one moves to the second place
++            int? last = slots[count - 1];
++
++            slots.RemoveAt(count - 1);
++            slots.Insert(1, last);
++        }
++
++        return null;
++    }
+ }
+diff --git a/GamingTournament/Data/ApplicationDbContext.cs b/GamingTournament/Data/ApplicationDbContext.cs
+index bb9902b..51810bf 100644
+--- a/GamingTournament/Data/ApplicationDbContext.cs
++++ b/GamingTournament/Data/ApplicationDbContext.cs
+@@ -31,6 +31,8 @@ public class ApplicationDbContext
+ 
+     public DbSet<Tournament> Tournaments { get; set; } = null!;
+ 
++    public DbSet<ErrorLog> ErrorLogs { get; set; } = null!;
++
+     protected override void OnModelCreating(
+         ModelBuilder builder)
+     {
+@@ -161,6 +163,10 @@ public class ApplicationDbContext
+                 "[FoundedYear] IS NULL OR " +
+                 "[FoundedYear] BETWEEN 1990 AND 2100"));
+ 
++        // Error journal: newest first on the admin page
++        builder.Entity<ErrorLog>()
++            .HasIndex(log => log.CreatedOn);
++
+         // Requests: the status strings the controllers use
+         builder.Entity<TeamJoinRequest>()
+             .Property(request => request.Status)
+diff --git a/GamingTournament/Data/DatabaseUpgrades.cs b/GamingTournament/Data/DatabaseUpgrades.cs
+new file mode 100644
+index 0000000..9a7d5bb
+--- /dev/null
++++ b/GamingTournament/Data/DatabaseUpgrades.cs
+@@ -0,0 +1,40 @@
++using Microsoft.EntityFrameworkCore;
++
++namespace GamingTournament.Data;
++
++// the project uses EnsureCreated (no migrations for SQLite).
++// EnsureCreated does nothing when the .db file already exists,
++// so a table added later has to be created by hand - otherwise
++// a developer with an old gamingtournament.db gets "no such table"
++public static class DatabaseUpgrades
++{
++    public static async Task EnsureErrorLogsTableAsync(
++        ApplicationDbContext context)
++    {
++        if (!context.Database.IsSqlite())
++        {
++            return;
++        }
++
++        // same columns as the ErrorLog model;
++        // IF NOT EXISTS: harmless on a fresh database
++        await context.Database.ExecuteSqlRawAsync(@"
++            CREATE TABLE IF NOT EXISTS ""ErrorLogs"" (
++                ""Id"" INTEGER NOT NULL
++                    CONSTRAINT ""PK_ErrorLogs"" PRIMARY KEY AUTOINCREMENT,
++                ""CreatedOn"" TEXT NOT NULL,
++                ""TraceId"" TEXT NOT NULL,
++                ""StatusCode"" INTEGER NOT NULL,
++                ""ExceptionType"" TEXT NOT NULL,
++                ""Message"" TEXT NOT NULL,
++                ""StackTrace"" TEXT NULL,
++                ""Path"" TEXT NOT NULL,
++                ""Method"" TEXT NOT NULL,
++                ""UserName"" TEXT NULL
++            );");
++
++        await context.Database.ExecuteSqlRawAsync(@"
++            CREATE INDEX IF NOT EXISTS ""IX_ErrorLogs_CreatedOn""
++            ON ""ErrorLogs"" (""CreatedOn"");");
++    }
++}
+diff --git a/GamingTournament/GamingTournament.csproj b/GamingTournament/GamingTournament.csproj
+index b13aa9d..f39b5ba 100644
+--- a/GamingTournament/GamingTournament.csproj
++++ b/GamingTournament/GamingTournament.csproj
+@@ -13,6 +13,14 @@
+         <PackageReference Include="Microsoft.AspNetCore.Identity.UI" Version="9.0.0"/>
+         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0"/>
+         <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.0"/>
++
++        <!-- Задание 8: логване във файл -->
++        <PackageReference Include="Serilog.AspNetCore" Version="9.0.0"/>
++        <PackageReference Include="Serilog.Sinks.File" Version="6.0.0"/>
++
++        <!-- Задание 7: експорт на справки -->
++        <PackageReference Include="QuestPDF" Version="2025.7.3"/>
++        <PackageReference Include="ClosedXML" Version="0.105.1"/>
+     </ItemGroup>
+ 
+     <ItemGroup>
+diff --git a/GamingTournament/Middleware/ExceptionHandlingMiddleware.cs b/GamingTournament/Middleware/ExceptionHandlingMiddleware.cs
+new file mode 100644
+index 0000000..ea71bbc
+--- /dev/null
++++ b/GamingTournament/Middleware/ExceptionHandlingMiddleware.cs
+@@ -0,0 +1,209 @@
++using GamingTournament.Data;
++using GamingTournament.Models;
++using Microsoft.EntityFrameworkCore;
++
++namespace GamingTournament.Middleware;
++
++// global error handling: every exception that escapes a controller
++// ends up here. It (1) writes it to the log file, (2) saves it in the
++// ErrorLogs table and (3) shows the user a friendly page instead of
++// a stack trace. Must be registered first in Program.cs.
++public class ExceptionHandlingMiddleware
++{
++    // HomeController.Error reads the prepared model from here
++    public const string ErrorItemKey = "GamingTournament.ErrorInfo";
++
++    private const string ErrorPath = "/Home/Error";
++
++    private readonly RequestDelegate _next;
++
++    private readonly ILogger<ExceptionHandlingMiddleware> _logger;
++
++    private readonly IServiceScopeFactory _scopeFactory;
++
++    private readonly IHostEnvironment _environment;
++
++    public ExceptionHandlingMiddleware(
++        RequestDelegate next,
++        ILogger<ExceptionHandlingMiddleware> logger,
++        IServiceScopeFactory scopeFactory,
++        IHostEnvironment environment)
++    {
++        _next = next;
++        _logger = logger;
++        _scopeFactory = scopeFactory;
++        _environment = environment;
++    }
++
++    public async Task InvokeAsync(HttpContext context)
++    {
++        try
++        {
++            await _next(context);
++        }
++        catch (OperationCanceledException)
++            when (context.RequestAborted.IsCancellationRequested)
++        {
++            // the browser closed the tab mid-request - not a bug
++        }
++        catch (Exception exception)
++        {
++            if (context.Response.HasStarted)
++            {
++                // headers are already sent, a new page is impossible
++                _logger.LogError(
++                    exception,
++                    "Грешка след началото на отговора: {Path}",
++                    context.Request.Path);
++
++                throw;
++            }
++
++            await HandleAsync(context, exception);
++        }
++    }
++
++    private async Task HandleAsync(
++        HttpContext context,
++        Exception exception)
++    {
++        string traceId = context.TraceIdentifier;
++
++        (int statusCode, string title, string message) =
++            Classify(exception);
++
++        _logger.LogError(
++            exception,
++            "Необработена грешка {TraceId}: {Method} {Path}",
++            traceId,
++            context.Request.Method,
++            context.Request.Path);
++
++        await SaveToDatabaseAsync(
++            context, exception, statusCode, traceId);
++
++        ErrorViewModel model = new ErrorViewModel
++        {
++            RequestId = traceId,
++            StatusCode = statusCode,
++            Title = title,
++            Message = message,
++
++            // technical details only on the developer's machine
++            Details = _environment.IsDevelopment()
++                ? exception.ToString()
++                : null
++        };
++
++        await ReExecuteAsync(context, model);
++    }
++
++    // runs the pipeline again for /Home/Error, the same idea as
++    // the built-in UseExceptionHandler, but with our own model
++    private async Task ReExecuteAsync(
++        HttpContext context,
++        ErrorViewModel model)
++    {
++        PathString originalPath = context.Request.Path;
++        QueryString originalQuery = context.Request.QueryString;
++        string originalMethod = context.Request.Method;
++
++        try
++        {
++            context.Items[ErrorItemKey] = model;
++
++            context.Response.Clear();
++            context.Response.StatusCode = model.StatusCode;
++
++            context.Request.Path = ErrorPath;
++            context.Request.QueryString = QueryString.Empty;
++            context.Request.Method = HttpMethods.Get;
++
++            // routing skips matching when an endpoint is already set
++            context.SetEndpoint(null);
++
++            await _next(context);
++        }
++        finally
++        {
++            context.Request.Path = originalPath;
++            context.Request.QueryString = originalQuery;
++            context.Request.Method = originalMethod;
++        }
++    }
++
++    // a NEW scope and DbContext: the request's own context may be
++    // exactly what failed and can still hold broken entities
++    private async Task SaveToDatabaseAsync(
++        HttpContext context,
++        Exception exception,
++        int statusCode,
++        string traceId)
++    {
++        try
++        {
++            using IServiceScope scope = _scopeFactory.CreateScope();
++
++            ApplicationDbContext database = scope.ServiceProvider
++                .GetRequiredService<ApplicationDbContext>();
++
++            database.ErrorLogs.Add(new ErrorLog
++            {
++                CreatedOn = DateTime.Now,
++                TraceId = traceId,
++                StatusCode = statusCode,
++                ExceptionType = Truncate(
++                    exception.GetType().Name, 200),
++                Message = Truncate(exception.Message, 2000),
++                StackTrace = Truncate(exception.ToString(), 8000),
++                Path = Truncate(context.Request.Path.Value ?? "", 500),
++                Method = Truncate(context.Request.Method, 10),
++                UserName = context.User.Identity?.Name
++            });
++
++            await database.SaveChangesAsync(CancellationToken.None);
++        }
++        catch (Exception loggingException)
++        {
++            // writing the log must never create a second error
++            _logger.LogError(
++                loggingException,
++                "Грешката {TraceId} не можа да се запише в базата.",
++                traceId);
++        }
++    }
++
++    // DbUpdateConcurrencyException derives from DbUpdateException,
++    // so it has to be matched first
++    private static (int StatusCode, string Title, string Message)
++        Classify(Exception exception)
++    {
++        return exception switch
++        {
++            DbUpdateConcurrencyException => (
++                409,
++                "Конфликт при запис",
++                "Данните са били променени от друг потребител. " +
++                "Презареди страницата и опитай отново."),
++
++            DbUpdateException => (
++                409,
++                "Записът не е възможен",
++                "Операцията нарушава правило в базата данни " +
++                "(например дублирано име). Промените не са запазени."),
++
++            _ => (
++                500,
++                "Нещо се обърка",
++                "Възникна неочаквана грешка. Промените не са " +
++                "запазени. Опитай отново след малко.")
++        };
++    }
++
++    private static string Truncate(string value, int maxLength)
++    {
++        return value.Length <= maxLength
++            ? value
++            : value.Substring(0, maxLength);
++    }
++}
+diff --git a/GamingTournament/Models/ErrorLog.cs b/GamingTournament/Models/ErrorLog.cs
+new file mode 100644
+index 0000000..fd1ec9e
+--- /dev/null
++++ b/GamingTournament/Models/ErrorLog.cs
+@@ -0,0 +1,42 @@
++using System.ComponentModel.DataAnnotations;
++
++namespace GamingTournament.Models;
++
++// one row per unhandled exception, written by
++// ExceptionHandlingMiddleware (the admin reads them in /ErrorLogs)
++public class ErrorLog
++{
++    public int Id { get; set; }
++
++    public DateTime CreatedOn { get; set; } = DateTime.Now;
++
++    // the same id is shown to the user on the error page,
++    // so a screenshot is enough to find the row and the log line
++    [Required]
++    [StringLength(100)]
++    public string TraceId { get; set; } = string.Empty;
++
++    public int StatusCode { get; set; }
++
++    [Required]
++    [StringLength(200)]
++    public string ExceptionType { get; set; } = string.Empty;
++
++    [Required]
++    [StringLength(2000)]
++    public string Message { get; set; } = string.Empty;
++
++    public string? StackTrace { get; set; }
++
++    [Required]
++    [StringLength(500)]
++    public string Path { get; set; } = string.Empty;
++
++    [Required]
++    [StringLength(10)]
++    public string Method { get; set; } = string.Empty;
++
++    // null for guests
++    [StringLength(256)]
++    public string? UserName { get; set; }
++}
+diff --git a/GamingTournament/Models/ErrorViewModel.cs b/GamingTournament/Models/ErrorViewModel.cs
+index 6f727ce..507d081 100644
+--- a/GamingTournament/Models/ErrorViewModel.cs
++++ b/GamingTournament/Models/ErrorViewModel.cs
+@@ -2,7 +2,19 @@ namespace GamingTournament.Models;
+ 
+ public class ErrorViewModel
+ {
++    // shown to the user; the same id is in the log file
++    // and in the ErrorLogs table
+     public string? RequestId { get; set; }
+ 
+     public bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+-}
+\ No newline at end of file
++
++    public int StatusCode { get; set; } = 500;
++
++    public string Title { get; set; } = "Нещо се обърка";
++
++    public string Message { get; set; } =
++        "Възникна неочаквана грешка. Опитай отново след малко.";
++
++    // exception text - filled only in the Development environment
++    public string? Details { get; set; }
++}
+diff --git a/GamingTournament/Models/ReportData.cs b/GamingTournament/Models/ReportData.cs
+new file mode 100644
+index 0000000..3b06958
+--- /dev/null
++++ b/GamingTournament/Models/ReportData.cs
+@@ -0,0 +1,99 @@
++namespace GamingTournament.Models;
++
++// everything the statistics page and both exports (PDF, Excel) show.
++// One object, so the page and the files can never disagree
++public class ReportData
++{
++    public DateTime GeneratedOn { get; set; } = DateTime.Now;
++
++    public int TeamCount { get; set; }
++
++    public int PlayerCount { get; set; }
++
++    public int TournamentCount { get; set; }
++
++    public int FinishedMatchCount { get; set; }
++
++    public int ScheduledMatchCount { get; set; }
++
++    public List<MonthlyCount> MatchesByMonth { get; set; } = new();
++
++    public List<GameStat> Games { get; set; } = new();
++
++    public List<RequestMonthStat> RequestsByMonth { get; set; } = new();
++
++    // for the dropdown, newest first
++    public List<Tournament> Tournaments { get; set; } = new();
++
++    public Tournament? SelectedTournament { get; set; }
++
++    // table and match list of the selected tournament
++    public List<StandingRow> Standings { get; set; } = new();
++
++    public List<Match> Matches { get; set; } = new();
++
++    // all teams with their coach and players (Excel sheet)
++    public List<Team> Teams { get; set; } = new();
++}
++
++// one month on a chart; Month is always the 1st day
++public class MonthlyCount
++{
++    public DateTime Month { get; set; }
++
++    public int Count { get; set; }
++
++    public string Label => Month.ToString("MM.yyyy");
++}
++
++// "most requested" analogue: which games are played the most
++public class GameStat
++{
++    public string Game { get; set; } = string.Empty;
++
++    public int Tournaments { get; set; }
++
++    // cancelled matches are not counted
++    public int Matches { get; set; }
++}
++
++// team + coach join requests of one month
++public class RequestMonthStat
++{
++    public DateTime Month { get; set; }
++
++    public int Approved { get; set; }
++
++    public int Rejected { get; set; }
++
++    public int Pending { get; set; }
++
++    public string Label => Month.ToString("MM.yyyy");
++}
++
++public class StandingRow
++{
++    public const int WinPoints = 3;
++
++    public const int DrawPoints = 1;
++
++    public int TeamId { get; set; }
++
++    public string TeamName { get; set; } = string.Empty;
++
++    public int Played { get; set; }
++
++    public int Wins { get; set; }
++
++    public int Draws { get; set; }
++
++    public int Losses { get; set; }
++
++    public int GoalsFor { get; set; }
++
++    public int GoalsAgainst { get; set; }
++
++    public int GoalDifference => GoalsFor - GoalsAgainst;
++
++    public int Points => Wins * WinPoints + Draws * DrawPoints;
++}
+diff --git a/GamingTournament/Program.cs b/GamingTournament/Program.cs
+index 4cb42dd..d0a87b4 100644
+--- a/GamingTournament/Program.cs
++++ b/GamingTournament/Program.cs
+@@ -1,10 +1,36 @@
+ using GamingTournament.Data;
++using GamingTournament.Middleware;
+ using GamingTournament.Models;
++using GamingTournament.Services;
+ using Microsoft.AspNetCore.Identity;
+ using Microsoft.EntityFrameworkCore;
++using Serilog;
++using Serilog.Events;
+ 
+ var builder = WebApplication.CreateBuilder(args);
+ 
++// Логване: конзола + файл logs/log-ГГГГММДД.txt (нов файл всеки ден,
++// пази се последните 14). Всичко от Microsoft под Warning се скрива,
++// иначе всяка SQL заявка влиза в лога
++builder.Host.UseSerilog((hostContext, configuration) =>
++{
++    configuration
++        .MinimumLevel.Information()
++        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
++        .Enrich.FromLogContext()
++        .WriteTo.Console()
++        .WriteTo.File(
++            Path.Combine(
++                hostContext.HostingEnvironment.ContentRootPath,
++                "logs",
++                "log-.txt"),
++            rollingInterval: RollingInterval.Day,
++            retainedFileCountLimit: 14,
++            outputTemplate:
++            "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] " +
++            "{Message:lj}{NewLine}{Exception}");
++});
++
+ var connectionString =
+     builder.Configuration.GetConnectionString(
+         "DefaultConnection"
+@@ -31,6 +57,9 @@ builder.Services
+ 
+ builder.Services.AddControllersWithViews();
+ 
++// Справки (Задание 7)
++builder.Services.AddScoped<IReportService, ReportService>();
++
+ var app = builder.Build();
+ 
+ using (IServiceScope scope = app.Services.CreateScope())
+@@ -46,6 +75,10 @@ using (IServiceScope scope = app.Services.CreateScope())
+ 
+     await context.Database.EnsureCreatedAsync();
+ 
++    // EnsureCreated не добавя нови таблици към вече съществуваща
++    // база, затова журналът на грешките се създава отделно
++    await DatabaseUpgrades.EnsureErrorLogsTableAsync(context);
++
+     RoleManager<IdentityRole> roleManager =
+         services.GetRequiredService<
+             RoleManager<IdentityRole>
+@@ -127,9 +160,15 @@ using (IServiceScope scope = app.Services.CreateScope())
+     await SeedData.SeedAsync(context, userManager);
+ }
+ 
++// Първият middleware: хваща всяка необработена грешка, записва я във
++// файла и в базата и показва страница 500 вместо stack trace
++app.UseMiddleware<ExceptionHandlingMiddleware>();
++
++// 404, 403 и т.н. без тяло -> /Home/HttpStatus?code=404
++app.UseStatusCodePagesWithReExecute("/Home/HttpStatus", "?code={0}");
++
+ if (!app.Environment.IsDevelopment())
+ {
+-    app.UseExceptionHandler("/Home/Error");
+     app.UseHsts();
+ }
+ 
+diff --git a/GamingTournament/Services/ReportExporter.cs b/GamingTournament/Services/ReportExporter.cs
+new file mode 100644
+index 0000000..088330d
+--- /dev/null
++++ b/GamingTournament/Services/ReportExporter.cs
+@@ -0,0 +1,400 @@
++using ClosedXML.Excel;
++using GamingTournament.Models;
++using QuestPDF.Fluent;
++using QuestPDF.Helpers;
++using QuestPDF.Infrastructure;
++
++namespace GamingTournament.Services;
++
++// turns a ReportData into a PDF (QuestPDF) or an Excel file (ClosedXML).
++// Static and without a database: it only formats what it is given
++public static class ReportExporter
++{
++    static ReportExporter()
++    {
++        // QuestPDF is free for non-commercial / small projects, but the
++        // license has to be chosen once before the first document
++        QuestPDF.Settings.License = LicenseType.Community;
++    }
++
++    // ---------------------------------------------------------- PDF
++
++    public static byte[] ToPdf(ReportData data)
++    {
++        return Document.Create(container =>
++        {
++            container.Page(page =>
++            {
++                page.Size(PageSizes.A4);
++                page.Margin(30);
++
++                // Arial has Cyrillic; the default QuestPDF font may not
++                page.DefaultTextStyle(style =>
++                    style.FontSize(10).FontFamily("Arial"));
++
++                page.Header().Column(column =>
++                {
++                    column.Item()
++                        .Text("GamingTournament - справка")
++                        .FontSize(18)
++                        .Bold();
++
++                    column.Item()
++                        .Text($"Генерирана на {data.GeneratedOn:dd.MM.yyyy HH:mm}")
++                        .FontSize(9)
++                        .FontColor(Colors.Grey.Darken1);
++                });
++
++                page.Content().PaddingVertical(10).Column(column =>
++                {
++                    column.Spacing(14);
++
++                    AddTable(
++                        column,
++                        "Обобщение",
++                        new[] { "Показател", "Стойност" },
++                        new float[] { 3, 1 },
++                        SummaryRows(data)
++                            .Select(row => new[]
++                            {
++                                row[0]!.ToString()!,
++                                row[1]!.ToString()!
++                            })
++                            .ToList());
++
++                    AddTable(
++                        column,
++                        "Изиграни мачове по месеци",
++                        new[] { "Месец", "Мачове" },
++                        new float[] { 2, 1 },
++                        data.MatchesByMonth
++                            .Select(item => new[]
++                            {
++                                item.Label,
++                                item.Count.ToString()
++                            })
++                            .ToList());
++
++                    AddTable(
++                        column,
++                        "Най-играни игри",
++                        new[] { "Игра", "Турнири", "Мачове" },
++                        new float[] { 3, 1, 1 },
++                        data.Games
++                            .Select(item => new[]
++                            {
++                                item.Game,
++                                item.Tournaments.ToString(),
++                                item.Matches.ToString()
++                            })
++                            .ToList());
++
++                    AddTable(
++                        column,
++                        "Заявки по месеци (играчи и треньори)",
++                        new[] { "Месец", "Одобрени", "Отхвърлени", "Чакащи" },
++                        new float[] { 2, 1, 1, 1 },
++                        data.RequestsByMonth
++                            .Select(item => new[]
++                            {
++                                item.Label,
++                                item.Approved.ToString(),
++                                item.Rejected.ToString(),
++                                item.Pending.ToString()
++                            })
++                            .ToList());
++
++                    string tournamentName =
++                        data.SelectedTournament?.Name ?? "-";
++
++                    AddTable(
++                        column,
++                        $"Класиране - {tournamentName}",
++                        new[] { "#", "Отбор", "М", "П", "Р", "З", "Голове", "Точки" },
++                        new float[] { 0.5f, 3, 0.7f, 0.7f, 0.7f, 0.7f, 1.2f, 1 },
++                        data.Standings
++                            .Select((row, index) => new[]
++                            {
++                                (index + 1).ToString(),
++                                row.TeamName,
++                                row.Played.ToString(),
++                                row.Wins.ToString(),
++                                row.Draws.ToString(),
++                                row.Losses.ToString(),
++                                $"{row.GoalsFor}:{row.GoalsAgainst}",
++                                row.Points.ToString()
++                            })
++                            .ToList());
++
++                    AddTable(
++                        column,
++                        $"Мачове - {tournamentName}",
++                        new[] { "Дата", "Домакин", "Резултат", "Гост", "Статус" },
++                        new float[] { 1.6f, 2.2f, 1, 2.2f, 1.4f },
++                        data.Matches
++                            .Select(match => new[]
++                            {
++                                match.ScheduledOn.ToString("dd.MM.yyyy HH:mm"),
++                                match.HomeTeam?.Name ?? "-",
++                                ScoreText(match),
++                                match.AwayTeam?.Name ?? "-",
++                                StatusText(match)
++                            })
++                            .ToList());
++                });
++
++                page.Footer().AlignCenter().Text(text =>
++                {
++                    text.Span("Страница ");
++                    text.CurrentPageNumber();
++                    text.Span(" от ");
++                    text.TotalPages();
++                });
++            });
++        }).GeneratePdf();
++    }
++
++    private static void AddTable(
++        ColumnDescriptor column,
++        string title,
++        string[] headers,
++        float[] widths,
++        List<string[]> rows)
++    {
++        column.Item().Text(title).FontSize(13).Bold();
++
++        if (rows.Count == 0)
++        {
++            column.Item()
++                .Text("Няма данни.")
++                .FontColor(Colors.Grey.Darken1);
++
++            return;
++        }
++
++        column.Item().Table(table =>
++        {
++            table.ColumnsDefinition(columns =>
++            {
++                foreach (float width in widths)
++                {
++                    columns.RelativeColumn(width);
++                }
++            });
++
++            table.Header(header =>
++            {
++                foreach (string text in headers)
++                {
++                    header.Cell()
++                        .Background(Colors.Grey.Lighten2)
++                        .Padding(4)
++                        .Text(text)
++                        .Bold();
++                }
++            });
++
++            foreach (string[] row in rows)
++            {
++                foreach (string value in row)
++                {
++                    table.Cell()
++                        .BorderBottom(0.5f)
++                        .BorderColor(Colors.Grey.Lighten2)
++                        .Padding(4)
++                        .Text(value);
++                }
++            }
++        });
++    }
++
++    // --------------------------------------------------------- Excel
++
++    public static byte[] ToExcel(ReportData data)
++    {
++        using XLWorkbook workbook = new XLWorkbook();
++
++        WriteSheet(
++            workbook,
++            "Обобщение",
++            new[] { "Показател", "Стойност" },
++            SummaryRows(data));
++
++        WriteSheet(
++            workbook,
++            "Класиране",
++            new[] { "#", "Отбор", "Мачове", "Победи", "Равенства",
++                    "Загуби", "Вкарани", "Получени", "Разлика", "Точки" },
++            data.Standings.Select((row, index) => new object?[]
++            {
++                index + 1,
++                row.TeamName,
++                row.Played,
++                row.Wins,
++                row.Draws,
++                row.Losses,
++                row.GoalsFor,
++                row.GoalsAgainst,
++                row.GoalDifference,
++                row.Points
++            }));
++
++        WriteSheet(
++            workbook,
++            "Мачове",
++            new[] { "Дата", "Турнир", "Домакин", "Резултат",
++                    "Гост", "Статус" },
++            data.Matches.Select(match => new object?[]
++            {
++                match.ScheduledOn,
++                data.SelectedTournament?.Name,
++                match.HomeTeam?.Name,
++                ScoreText(match),
++                match.AwayTeam?.Name,
++                StatusText(match)
++            }));
++
++        WriteSheet(
++            workbook,
++            "По месеци",
++            new[] { "Месец", "Изиграни мачове" },
++            data.MatchesByMonth.Select(item => new object?[]
++            {
++                item.Label,
++                item.Count
++            }));
++
++        WriteSheet(
++            workbook,
++            "Игри",
++            new[] { "Игра", "Турнири", "Мачове" },
++            data.Games.Select(item => new object?[]
++            {
++                item.Game,
++                item.Tournaments,
++                item.Matches
++            }));
++
++        WriteSheet(
++            workbook,
++            "Заявки",
++            new[] { "Месец", "Одобрени", "Отхвърлени", "Чакащи" },
++            data.RequestsByMonth.Select(item => new object?[]
++            {
++                item.Label,
++                item.Approved,
++                item.Rejected,
++                item.Pending
++            }));
++
++        WriteSheet(
++            workbook,
++            "Отбори",
++            new[] { "Отбор", "Държава", "Основан", "Треньор", "Играчи" },
++            data.Teams.Select(team => new object?[]
++            {
++                team.Name,
++                team.Country,
++                team.FoundedYear,
++                team.Coach?.UserName,
++                string.Join(", ", team.Members
++                    .Select(member => member.UserName))
++            }));
++
++        using MemoryStream stream = new MemoryStream();
++
++        workbook.SaveAs(stream);
++
++        return stream.ToArray();
++    }
++
++    private static void WriteSheet(
++        XLWorkbook workbook,
++        string name,
++        string[] headers,
++        IEnumerable<object?[]> rows)
++    {
++        IXLWorksheet sheet = workbook.Worksheets.Add(name);
++
++        for (int column = 0; column < headers.Length; column++)
++        {
++            sheet.Cell(1, column + 1).Value = headers[column];
++        }
++
++        IXLRange headerRow = sheet.Range(1, 1, 1, headers.Length);
++
++        headerRow.Style.Font.Bold = true;
++        headerRow.Style.Font.FontColor = XLColor.White;
++        headerRow.Style.Fill.BackgroundColor = XLColor.FromHtml("#7c5cff");
++
++        int rowNumber = 2;
++
++        foreach (object?[] row in rows)
++        {
++            for (int column = 0; column < row.Length; column++)
++            {
++                SetCell(sheet.Cell(rowNumber, column + 1), row[column]);
++            }
++
++            rowNumber++;
++        }
++
++        sheet.SheetView.FreezeRows(1);
++        sheet.Columns().AdjustToContents();
++    }
++
++    // numbers stay numbers and dates stay dates, so Excel can
++    // sort and sum them - not everything as text
++    private static void SetCell(IXLCell cell, object? value)
++    {
++        switch (value)
++        {
++            case null:
++                break;
++
++            case int number:
++                cell.Value = number;
++                break;
++
++            case DateTime date:
++                cell.Value = date;
++                cell.Style.DateFormat.Format = "dd.MM.yyyy HH:mm";
++                break;
++
++            default:
++                cell.Value = value.ToString() ?? "";
++                break;
++        }
++    }
++
++    // -------------------------------------------------------- shared
++
++    private static List<object?[]> SummaryRows(ReportData data)
++    {
++        return new List<object?[]>
++        {
++            new object?[] { "Отбори", data.TeamCount },
++            new object?[] { "Играчи в отбори", data.PlayerCount },
++            new object?[] { "Турнири", data.TournamentCount },
++            new object?[] { "Изиграни мачове", data.FinishedMatchCount },
++            new object?[] { "Предстоящи мачове", data.ScheduledMatchCount }
++        };
++    }
++
++    private static string ScoreText(Match match)
++    {
++        return match.Status == MatchStatus.Finished
++            ? $"{match.HomeScore}:{match.AwayScore}"
++            : "-";
++    }
++
++    private static string StatusText(Match match)
++    {
++        return match.Status switch
++        {
++            MatchStatus.Scheduled => "Предстоящ",
++            MatchStatus.Cancelled => "Отменен",
++            _ => match.WinnerTeamId == null ? "Равен" : "Приключил"
++        };
++    }
++}
+diff --git a/GamingTournament/Services/ReportService.cs b/GamingTournament/Services/ReportService.cs
+new file mode 100644
+index 0000000..6fd9e9e
+--- /dev/null
++++ b/GamingTournament/Services/ReportService.cs
+@@ -0,0 +1,249 @@
++using GamingTournament.Data;
++using GamingTournament.Models;
++using Microsoft.EntityFrameworkCore;
++
++namespace GamingTournament.Services;
++
++public interface IReportService
++{
++    // tournamentId == null -> the newest tournament
++    Task<ReportData> BuildAsync(int? tournamentId);
++}
++
++public class ReportService : IReportService
++{
++    private readonly ApplicationDbContext _context;
++
++    public ReportService(ApplicationDbContext context)
++    {
++        _context = context;
++    }
++
++    public async Task<ReportData> BuildAsync(int? tournamentId)
++    {
++        ReportData data = new ReportData
++        {
++            TeamCount = await _context.Teams.CountAsync(),
++
++            PlayerCount = await _context.Users
++                .CountAsync(user => user.TeamId != null),
++
++            TournamentCount = await _context.Tournaments.CountAsync(),
++
++            FinishedMatchCount = await _context.Matches
++                .CountAsync(match =>
++                    match.Status == MatchStatus.Finished),
++
++            ScheduledMatchCount = await _context.Matches
++                .CountAsync(match =>
++                    match.Status == MatchStatus.Scheduled)
++        };
++
++        data.MatchesByMonth = await GetMatchesByMonthAsync();
++        data.Games = await GetGameStatsAsync();
++        data.RequestsByMonth = await GetRequestsByMonthAsync();
++
++        data.Tournaments = await _context.Tournaments
++            .AsNoTracking()
++            .OrderByDescending(tournament => tournament.StartDate)
++            .ToListAsync();
++
++        data.SelectedTournament = tournamentId == null
++            ? data.Tournaments.FirstOrDefault()
++            : data.Tournaments.FirstOrDefault(
++                tournament => tournament.Id == tournamentId);
++
++        if (data.SelectedTournament != null)
++        {
++            int selectedId = data.SelectedTournament.Id;
++
++            data.Matches = await _context.Matches
++                .AsNoTracking()
++                .Include(match => match.HomeTeam)
++                .Include(match => match.AwayTeam)
++                .Where(match => match.TournamentId == selectedId)
++                .OrderBy(match => match.ScheduledOn)
++                .ToListAsync();
++
++            data.Standings = BuildStandings(data.Matches);
++        }
++
++        data.Teams = await _context.Teams
++            .AsNoTracking()
++            .Include(team => team.Coach)
++            .Include(team => team.Members)
++            .OrderBy(team => team.Name)
++            .ToListAsync();
++
++        return data;
++    }
++
++    // Pure calculation (no database), so it is easy to unit test.
++    // 3 points for a win, 1 for a draw. Cancelled matches are ignored,
++    // scheduled ones only add the team to the table with 0 played.
++    public static List<StandingRow> BuildStandings(
++        IEnumerable<Match> matches)
++    {
++        Dictionary<int, StandingRow> rows =
++            new Dictionary<int, StandingRow>();
++
++        foreach (Match match in matches)
++        {
++            if (match.Status == MatchStatus.Cancelled)
++            {
++                continue;
++            }
++
++            StandingRow home = GetRow(
++                rows, match.HomeTeamId, match.HomeTeam?.Name);
++
++            StandingRow away = GetRow(
++                rows, match.AwayTeamId, match.AwayTeam?.Name);
++
++            if (match.Status != MatchStatus.Finished ||
++                match.HomeScore == null ||
++                match.AwayScore == null)
++            {
++                continue;
++            }
++
++            int homeScore = match.HomeScore.Value;
++            int awayScore = match.AwayScore.Value;
++
++            home.Played++;
++            away.Played++;
++
++            home.GoalsFor += homeScore;
++            home.GoalsAgainst += awayScore;
++            away.GoalsFor += awayScore;
++            away.GoalsAgainst += homeScore;
++
++            if (homeScore > awayScore)
++            {
++                home.Wins++;
++                away.Losses++;
++            }
++            else if (homeScore < awayScore)
++            {
++                away.Wins++;
++                home.Losses++;
++            }
++            else
++            {
++                home.Draws++;
++                away.Draws++;
++            }
++        }
++
++        return rows.Values
++            .OrderByDescending(row => row.Points)
++            .ThenByDescending(row => row.GoalDifference)
++            .ThenByDescending(row => row.GoalsFor)
++            .ThenBy(row => row.TeamName)
++            .ToList();
++    }
++
++    private static StandingRow GetRow(
++        Dictionary<int, StandingRow> rows,
++        int teamId,
++        string? teamName)
++    {
++        if (!rows.TryGetValue(teamId, out StandingRow? row))
++        {
++            row = new StandingRow
++            {
++                TeamId = teamId,
++                TeamName = teamName ?? ("Отбор " + teamId)
++            };
++
++            rows[teamId] = row;
++        }
++
++        return row;
++    }
++
++    // finished matches per month (by the scheduled date).
++    // Grouped in memory: SQLite can't group by year+month in SQL
++    public async Task<List<MonthlyCount>> GetMatchesByMonthAsync()
++    {
++        List<DateTime> dates = await _context.Matches
++            .AsNoTracking()
++            .Where(match => match.Status == MatchStatus.Finished)
++            .Select(match => match.ScheduledOn)
++            .ToListAsync();
++
++        return dates
++            .GroupBy(date => new DateTime(date.Year, date.Month, 1))
++            .OrderBy(group => group.Key)
++            .Select(group => new MonthlyCount
++            {
++                Month = group.Key,
++                Count = group.Count()
++            })
++            .ToList();
++    }
++
++    // which games are played the most
++    public async Task<List<GameStat>> GetGameStatsAsync()
++    {
++        var tournaments = await _context.Tournaments
++            .AsNoTracking()
++            .Select(tournament => new
++            {
++                tournament.Game,
++                MatchCount = tournament.Matches.Count(match =>
++                    match.Status != MatchStatus.Cancelled)
++            })
++            .ToListAsync();
++
++        return tournaments
++            .GroupBy(item => item.Game)
++            .Select(group => new GameStat
++            {
++                Game = group.Key,
++                Tournaments = group.Count(),
++                Matches = group.Sum(item => item.MatchCount)
++            })
++            .OrderByDescending(stat => stat.Matches)
++            .ThenBy(stat => stat.Game)
++            .ToList();
++    }
++
++    // player join requests and coach requests together, per month
++    public async Task<List<RequestMonthStat>> GetRequestsByMonthAsync()
++    {
++        var joinRequests = await _context.TeamJoinRequests
++            .AsNoTracking()
++            .Select(request => new
++            {
++                request.CreatedOn,
++                request.Status
++            })
++            .ToListAsync();
++
++        var coachRequests = await _context.CoachRequests
++            .AsNoTracking()
++            .Select(request => new
++            {
++                request.CreatedOn,
++                request.Status
++            })
++            .ToListAsync();
++
++        return joinRequests
++            .Concat(coachRequests)
++            .GroupBy(request => new DateTime(
++                request.CreatedOn.Year,
++                request.CreatedOn.Month,
++                1))
++            .OrderBy(group => group.Key)
++            .Select(group => new RequestMonthStat
++            {
++                Month = group.Key,
++                Approved = group.Count(item => item.Status == "Approved"),
++                Rejected = group.Count(item => item.Status == "Rejected"),
++                Pending = group.Count(item => item.Status == "Pending")
++            })
++            .ToList();
++    }
++}
+diff --git a/GamingTournament/Views/ErrorLogs/Index.cshtml b/GamingTournament/Views/ErrorLogs/Index.cshtml
+new file mode 100644
+index 0000000..64b70e2
+--- /dev/null
++++ b/GamingTournament/Views/ErrorLogs/Index.cshtml
+@@ -0,0 +1,136 @@
++@model List<GamingTournament.Models.ErrorLog>
++
++@{
++    ViewData["Title"] = "Журнал на грешките";
++
++    int currentPage = ViewBag.CurrentPage ?? 1;
++    int totalPages = ViewBag.TotalPages ?? 0;
++    int totalLogs = ViewBag.TotalLogs ?? 0;
++}
++
++<h1 class="page-title">Журнал на грешките</h1>
++
++@if (TempData["SuccessMessage"] != null)
++{
++    <div class="alert alert-success">
++        @TempData["SuccessMessage"]
++    </div>
++}
++
++<p class="text-muted">
++    Необработените грешки се записват и във файл
++    (<code>logs/log-ГГГГММДД.txt</code>). Кодът е същият, който
++    потребителят вижда на страницата за грешка.
++</p>
++
++@if (Model.Count == 0)
++{
++    <div class="alert alert-info">
++        Няма записани грешки.
++    </div>
++}
++else
++{
++    <div class="d-flex justify-content-between align-items-center mb-3">
++        <span class="text-muted">Общо: @totalLogs</span>
++
++        <form asp-controller="ErrorLogs"
++              asp-action="Clear"
++              method="post"
++              onsubmit="return confirm('Да изчистя ли целия журнал?');">
++            <button type="submit" class="btn btn-danger btn-sm">
++                Изчисти журнала
++            </button>
++        </form>
++    </div>
++
++    <div class="table-card table-responsive">
++        <table class="table table-hover align-middle">
++            <thead>
++            <tr>
++                <th>Час</th>
++                <th>Код</th>
++                <th>Статус</th>
++                <th>Заявка</th>
++                <th>Потребител</th>
++                <th>Грешка</th>
++            </tr>
++            </thead>
++
++            <tbody>
++            @foreach (var log in Model)
++            {
++                <tr>
++                    <td class="text-nowrap">
++                        @log.CreatedOn.ToString("dd.MM.yyyy HH:mm:ss")
++                    </td>
++
++                    <td><code>@log.TraceId</code></td>
++
++                    <td>
++                        <span class="badge @(log.StatusCode >= 500 ? "bg-danger" : "bg-warning text-dark")">
++                            @log.StatusCode
++                        </span>
++                    </td>
++
++                    <td class="text-nowrap">
++                        @log.Method @log.Path
++                    </td>
++
++                    <td>@(log.UserName ?? "гост")</td>
++
++                    <td>
++                        <strong>@log.ExceptionType</strong>
++                        <div>@log.Message</div>
++
++                        @if (!string.IsNullOrEmpty(log.StackTrace))
++                        {
++                            <details class="log-details">
++                                <summary>Stack trace</summary>
++                                <pre>@log.StackTrace</pre>
++                            </details>
++                        }
++                    </td>
++                </tr>
++            }
++            </tbody>
++        </table>
++    </div>
++
++    @if (totalPages > 1)
++    {
++        <nav class="mt-3">
++            <ul class="pagination">
++                <li class="page-item @(currentPage == 1 ? "disabled" : "")">
++                    <a class="page-link"
++                       asp-controller="ErrorLogs"
++                       asp-action="Index"
++                       asp-route-page="@(currentPage - 1)">
++                        Назад
++                    </a>
++                </li>
++
++                @for (int i = 1; i <= totalPages; i++)
++                {
++                    <li class="page-item @(i == currentPage ? "active" : "")">
++                        <a class="page-link"
++                           asp-controller="ErrorLogs"
++                           asp-action="Index"
++                           asp-route-page="@i">
++                            @i
++                        </a>
++                    </li>
++                }
++
++                <li class="page-item @(currentPage == totalPages ? "disabled" : "")">
++                    <a class="page-link"
++                       asp-controller="ErrorLogs"
++                       asp-action="Index"
++                       asp-route-page="@(currentPage + 1)">
++                        Напред
++                    </a>
++                </li>
++            </ul>
++        </nav>
++    }
++}
+diff --git a/GamingTournament/Views/Home/Forbidden.cshtml b/GamingTournament/Views/Home/Forbidden.cshtml
+new file mode 100644
+index 0000000..8c67185
+--- /dev/null
++++ b/GamingTournament/Views/Home/Forbidden.cshtml
+@@ -0,0 +1,22 @@
++@model ErrorViewModel
++@{
++    ViewData["Title"] = "Нямаш достъп";
++}
++
++<section class="error-page">
++    <div class="error-code">403</div>
++
++    <h1>Нямаш достъп до тази страница</h1>
++
++    <p class="lead">
++        Действието е позволено само на администратор.
++    </p>
++
++    <div class="d-flex justify-content-center flex-wrap gap-2 mt-4">
++        <a asp-controller="Home"
++           asp-action="Index"
++           class="btn btn-primary">
++            Към началото
++        </a>
++    </div>
++</section>
+diff --git a/GamingTournament/Views/Home/NotFound.cshtml b/GamingTournament/Views/Home/NotFound.cshtml
+new file mode 100644
+index 0000000..87fa9e1
+--- /dev/null
++++ b/GamingTournament/Views/Home/NotFound.cshtml
+@@ -0,0 +1,28 @@
++@model ErrorViewModel
++@{
++    ViewData["Title"] = "Страницата не е намерена";
++}
++
++<section class="error-page">
++    <div class="error-code">404</div>
++
++    <h1>Страницата не е намерена</h1>
++
++    <p class="lead">
++        Този адрес не съществува или записът вече е изтрит.
++    </p>
++
++    <div class="d-flex justify-content-center flex-wrap gap-2 mt-4">
++        <a asp-controller="Home"
++           asp-action="Index"
++           class="btn btn-primary">
++            Към началото
++        </a>
++
++        <a asp-controller="Matches"
++           asp-action="Index"
++           class="btn btn-outline-primary">
++            Всички мачове
++        </a>
++    </div>
++</section>
+diff --git a/GamingTournament/Views/Reports/Index.cshtml b/GamingTournament/Views/Reports/Index.cshtml
+new file mode 100644
+index 0000000..39e4d7a
+--- /dev/null
++++ b/GamingTournament/Views/Reports/Index.cshtml
+@@ -0,0 +1,303 @@
++@model GamingTournament.Models.ReportData
++
++@{
++    ViewData["Title"] = "Статистики";
++
++    int? selectedId = Model.SelectedTournament?.Id;
++}
++
++<h1 class="page-title">Статистики и справки</h1>
++
++@* tournament picker + export buttons *@
++<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
++    <form method="get"
++          asp-controller="Reports"
++          asp-action="Index"
++          class="d-flex align-items-end gap-2">
++        <div>
++            <label for="tournamentId" class="form-label mb-1">
++                Турнир (класиране и мачове)
++            </label>
++
++            <select id="tournamentId"
++                    name="tournamentId"
++                    class="form-select"
++                    disabled="@(Model.Tournaments.Count == 0)">
++                @foreach (var tournament in Model.Tournaments)
++                {
++                    <option value="@tournament.Id"
++                            selected="@(tournament.Id == selectedId)">
++                        @tournament.Name
++                    </option>
++                }
++            </select>
++        </div>
++
++        <button type="submit"
++                class="btn btn-outline-primary"
++                disabled="@(Model.Tournaments.Count == 0)">
++            Покажи
++        </button>
++    </form>
++
++    <div class="d-flex gap-2">
++        <a asp-controller="Reports"
++           asp-action="ExportPdf"
++           asp-route-tournamentId="@selectedId"
++           class="btn btn-danger">
++            Изтегли PDF
++        </a>
++
++        <a asp-controller="Reports"
++           asp-action="ExportExcel"
++           asp-route-tournamentId="@selectedId"
++           class="btn btn-success">
++            Изтегли Excel
++        </a>
++    </div>
++</div>
++
++@* key numbers *@
++<div class="row text-center mb-4">
++    <div class="col-6 col-md-3 mb-3">
++        <div class="card stat-card h-100">
++            <div class="card-body py-4">
++                <div class="stat-number">@Model.TeamCount</div>
++                <div class="stat-label">Отбори</div>
++            </div>
++        </div>
++    </div>
++
++    <div class="col-6 col-md-3 mb-3">
++        <div class="card stat-card h-100">
++            <div class="card-body py-4">
++                <div class="stat-number">@Model.TournamentCount</div>
++                <div class="stat-label">Турнири</div>
++            </div>
++        </div>
++    </div>
++
++    <div class="col-6 col-md-3 mb-3">
++        <div class="card stat-card h-100">
++            <div class="card-body py-4">
++                <div class="stat-number">@Model.FinishedMatchCount</div>
++                <div class="stat-label">Изиграни мача</div>
++            </div>
++        </div>
++    </div>
++
++    <div class="col-6 col-md-3 mb-3">
++        <div class="card stat-card h-100">
++            <div class="card-body py-4">
++                <div class="stat-number">@Model.ScheduledMatchCount</div>
++                <div class="stat-label">Предстоящи мача</div>
++            </div>
++        </div>
++    </div>
++</div>
++
++@* charts *@
++<div class="row g-3 mb-4">
++    <div class="col-lg-7">
++        <div class="card h-100">
++            <div class="card-body">
++                <h2 class="h5 mb-3">Изиграни мачове по месеци</h2>
++
++                @if (Model.MatchesByMonth.Count == 0)
++                {
++                    <p class="text-muted mb-0">Още няма изиграни мачове.</p>
++                }
++                else
++                {
++                    <div class="chart-box">
++                        <canvas id="matchesByMonth"></canvas>
++                    </div>
++                }
++            </div>
++        </div>
++    </div>
++
++    <div class="col-lg-5">
++        <div class="card h-100">
++            <div class="card-body">
++                <h2 class="h5 mb-3">Най-играни игри</h2>
++
++                @if (Model.Games.Count == 0)
++                {
++                    <p class="text-muted mb-0">Още няма турнири.</p>
++                }
++                else
++                {
++                    <div class="chart-box">
++                        <canvas id="games"></canvas>
++                    </div>
++                }
++            </div>
++        </div>
++    </div>
++
++    <div class="col-12">
++        <div class="card">
++            <div class="card-body">
++                <h2 class="h5 mb-3">Заявки по месеци (играчи и треньори)</h2>
++
++                @if (Model.RequestsByMonth.Count == 0)
++                {
++                    <p class="text-muted mb-0">Още няма заявки.</p>
++                }
++                else
++                {
++                    <div class="chart-box">
++                        <canvas id="requests"></canvas>
++                    </div>
++                }
++            </div>
++        </div>
++    </div>
++</div>
++
++@* standings of the selected tournament *@
++<h2 class="h4 mb-3">
++    Класиране
++    @if (Model.SelectedTournament != null)
++    {
++        <span class="text-muted">- @Model.SelectedTournament.Name</span>
++    }
++</h2>
++
++@if (Model.Standings.Count == 0)
++{
++    <div class="alert alert-info">
++        Няма данни за класиране - турнирът още няма мачове.
++    </div>
++}
++else
++{
++    <div class="table-card table-responsive mb-4">
++        <table class="table table-hover align-middle">
++            <thead>
++            <tr>
++                <th>#</th>
++                <th>Отбор</th>
++                <th class="text-center">М</th>
++                <th class="text-center">П</th>
++                <th class="text-center">Р</th>
++                <th class="text-center">З</th>
++                <th class="text-center">Голове</th>
++                <th class="text-center">Точки</th>
++            </tr>
++            </thead>
++
++            <tbody>
++            @{
++                int place = 1;
++            }
++
++            @foreach (var row in Model.Standings)
++            {
++                <tr>
++                    <td>@(place++)</td>
++                    <td><strong>@row.TeamName</strong></td>
++                    <td class="text-center">@row.Played</td>
++                    <td class="text-center">@row.Wins</td>
++                    <td class="text-center">@row.Draws</td>
++                    <td class="text-center">@row.Losses</td>
++                    <td class="text-center">@row.GoalsFor:@row.GoalsAgainst</td>
++                    <td class="text-center"><strong>@row.Points</strong></td>
++                </tr>
++            }
++            </tbody>
++        </table>
++    </div>
++
++    <p class="text-muted small">
++        М - мачове, П - победи, Р - равенства, З - загуби.
++        Победа = @GamingTournament.Models.StandingRow.WinPoints точки,
++        равенство = @GamingTournament.Models.StandingRow.DrawPoints точка.
++    </p>
++}
++
++@section Scripts {
++    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
++
++    <script>
++        // the data comes from the server (ReportData); Json.Serialize
++        // escapes it, so a game name can't break out of the script
++        const monthLabels = @Json.Serialize(Model.MatchesByMonth.Select(item => item.Label));
++        const monthValues = @Json.Serialize(Model.MatchesByMonth.Select(item => item.Count));
++
++        const gameLabels = @Json.Serialize(Model.Games.Select(item => item.Game));
++        const gameValues = @Json.Serialize(Model.Games.Select(item => item.Matches));
++
++        const requestLabels = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Label));
++        const requestApproved = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Approved));
++        const requestRejected = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Rejected));
++        const requestPending = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Pending));
++
++        // colours of the dark theme (site.css)
++        Chart.defaults.color = '#8d97b5';
++        Chart.defaults.borderColor = '#263152';
++
++        const palette = ['#7c5cff', '#22d3ee', '#22c55e', '#f59e0b', '#ef4444', '#ec4899'];
++
++        function draw(id, config) {
++            const canvas = document.getElementById(id);
++
++            // no canvas = the page shows a "no data" text instead
++            if (canvas) {
++                new Chart(canvas, config);
++            }
++        }
++
++        draw('matchesByMonth', {
++            type: 'bar',
++            data: {
++                labels: monthLabels,
++                datasets: [{
++                    label: 'Изиграни мачове',
++                    data: monthValues,
++                    backgroundColor: '#7c5cff',
++                    borderRadius: 6
++                }]
++            },
++            options: {
++                maintainAspectRatio: false,
++                plugins: { legend: { display: false } },
++                scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
++            }
++        });
++
++        draw('games', {
++            type: 'doughnut',
++            data: {
++                labels: gameLabels,
++                datasets: [{
++                    label: 'Мачове',
++                    data: gameValues,
++                    backgroundColor: palette,
++                    borderColor: '#131a2b'
++                }]
++            },
++            options: { maintainAspectRatio: false }
++        });
++
++        draw('requests', {
++            type: 'bar',
++            data: {
++                labels: requestLabels,
++                datasets: [
++                    { label: 'Одобрени', data: requestApproved, backgroundColor: '#22c55e' },
++                    { label: 'Отхвърлени', data: requestRejected, backgroundColor: '#ef4444' },
++                    { label: 'Чакащи', data: requestPending, backgroundColor: '#f59e0b' }
++                ]
++            },
++            options: {
++                maintainAspectRatio: false,
++                scales: {
++                    x: { stacked: true },
++                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
++                }
++            }
++        });
++    </script>
++}
+diff --git a/GamingTournament/Views/Shared/Error.cshtml b/GamingTournament/Views/Shared/Error.cshtml
+index 4d96f6a..24d0879 100644
+--- a/GamingTournament/Views/Shared/Error.cshtml
++++ b/GamingTournament/Views/Shared/Error.cshtml
+@@ -1,25 +1,42 @@
+ ﻿@model ErrorViewModel
+ @{
+-    ViewData["Title"] = "Error";
++    ViewData["Title"] = Model.Title;
+ }
+ 
+-<h1 class="text-danger">Error.</h1>
+-<h2 class="text-danger">An error occurred while processing your request.</h2>
++<section class="error-page">
++    <div class="error-code error-code-danger">@Model.StatusCode</div>
+ 
+-@if (Model.ShowRequestId)
+-{
+-    <p>
+-        <strong>Request ID:</strong> <code>@Model.RequestId</code>
+-    </p>
+-}
++    <h1>@Model.Title</h1>
++
++    <p class="lead">@Model.Message</p>
++
++    @if (Model.ShowRequestId)
++    {
++        <p class="text-muted">
++            Код на грешката:
++            <code>@Model.RequestId</code>
++        </p>
++    }
++
++    <div class="d-flex justify-content-center flex-wrap gap-2 mt-4">
++        <a asp-controller="Home"
++           asp-action="Index"
++           class="btn btn-primary">
++            Към началото
++        </a>
++
++        <a href="javascript:history.back()"
++           class="btn btn-outline-primary">
++            Назад
++        </a>
++    </div>
+ 
+-<h3>Development Mode</h3>
+-<p>
+-    Swapping to <strong>Development</strong> environment will display more detailed information about the error that occurred.
+-</p>
+-<p>
+-    <strong>The Development environment shouldn't be enabled for deployed applications.</strong>
+-    It can result in displaying sensitive information from exceptions to end users.
+-    For local debugging, enable the <strong>Development</strong> environment by setting the <strong>ASPNETCORE_ENVIRONMENT</strong> environment variable to <strong>Development</strong>
+-    and restarting the app.
+-</p>
+\ No newline at end of file
++    @* only the Development environment fills Details *@
++    @if (!string.IsNullOrEmpty(Model.Details))
++    {
++        <details class="error-details text-start mt-4">
++            <summary>Технически подробности (само в Development)</summary>
++            <pre>@Model.Details</pre>
++        </details>
++    }
++</section>
+diff --git a/GamingTournament/Views/Shared/_Layout.cshtml b/GamingTournament/Views/Shared/_Layout.cshtml
+index 025a064..dadf231 100644
+--- a/GamingTournament/Views/Shared/_Layout.cshtml
++++ b/GamingTournament/Views/Shared/_Layout.cshtml
+@@ -40,6 +40,15 @@
+                     <li class="nav-item">
+                         <a class="nav-link @ActiveClass("Tournaments")" asp-area="" asp-controller="Tournaments" asp-action="Index">Турнири</a>
+                     </li>
++                    @if (User.IsInRole("Admin"))
++                    {
++                        <li class="nav-item">
++                            <a class="nav-link @ActiveClass("Reports")" asp-area="" asp-controller="Reports" asp-action="Index">Статистики</a>
++                        </li>
++                        <li class="nav-item">
++                            <a class="nav-link @ActiveClass("ErrorLogs")" asp-area="" asp-controller="ErrorLogs" asp-action="Index">Журнал</a>
++                        </li>
++                    }
+                 </ul>
+                 <partial name="_LoginPartial"/>
+             </div>
+diff --git a/GamingTournament/Views/Tournaments/Index.cshtml b/GamingTournament/Views/Tournaments/Index.cshtml
+index 3445837..042b344 100644
+--- a/GamingTournament/Views/Tournaments/Index.cshtml
++++ b/GamingTournament/Views/Tournaments/Index.cshtml
+@@ -14,6 +14,13 @@
+     </div>
+ }
+ 
++@if (TempData["ErrorMessage"] != null)
++{
++    <div class="alert alert-danger">
++        @TempData["ErrorMessage"]
++    </div>
++}
++
+ @if (User.IsInRole("Admin"))
+ {
+     <p>
+@@ -42,6 +49,10 @@ else
+             <th>Период</th>
+             <th>Мачове</th>
+             <th>Статус</th>
++            @if (User.IsInRole("Admin"))
++            {
++                <th>Действия</th>
++            }
+         </tr>
+         </thead>
+ 
+@@ -81,6 +92,26 @@ else
+                         <span class="badge bg-success">Тече</span>
+                     }
+                 </td>
++
++                @if (User.IsInRole("Admin"))
++                {
++                    <td>
++                        @* only for a tournament without matches yet *@
++                        @if (tournament.Matches.Count == 0)
++                        {
++                            <form asp-controller="Tournaments"
++                                  asp-action="GenerateMatches"
++                                  asp-route-id="@tournament.Id"
++                                  method="post"
++                                  onsubmit="return confirm('Да генерирам ли програма за всички отбори?');">
++                                <button type="submit"
++                                        class="btn btn-success btn-sm">
++                                    Генерирай мачове
++                                </button>
++                            </form>
++                        }
++                    </td>
++                }
+             </tr>
+         }
+         </tbody>
+diff --git a/GamingTournament/wwwroot/css/site.css b/GamingTournament/wwwroot/css/site.css
+index a8cf1c9..6a04764 100644
+--- a/GamingTournament/wwwroot/css/site.css
++++ b/GamingTournament/wwwroot/css/site.css
+@@ -327,3 +327,65 @@ h1, h2, h3, h4, h5 {
+ .site-footer a:hover {
+   color: var(--gt-accent-2);
+ }
++
++/* ===== Страници за грешки (404 / 403 / 500) ===== */
++.error-page {
++  text-align: center;
++  padding: 3.5rem 1rem 2rem;
++}
++
++.error-code {
++  font-size: clamp(4.5rem, 16vw, 8rem);
++  font-weight: 800;
++  line-height: 1;
++  letter-spacing: -0.03em;
++  background: linear-gradient(90deg, var(--gt-accent), var(--gt-accent-2));
++  -webkit-background-clip: text;
++  background-clip: text;
++  -webkit-text-fill-color: transparent;
++}
++
++.error-code-danger {
++  background: linear-gradient(90deg, var(--gt-danger), var(--gt-warning));
++  -webkit-background-clip: text;
++  background-clip: text;
++}
++
++.error-details {
++  max-width: 900px;
++  margin-inline: auto;
++  background: var(--gt-surface);
++  border: 1px solid var(--gt-border);
++  border-radius: 0.75rem;
++  padding: 0.75rem 1rem;
++}
++
++.error-details pre {
++  margin: 0.75rem 0 0;
++  max-height: 22rem;
++  overflow: auto;
++  white-space: pre-wrap;
++  color: var(--gt-muted);
++  font-size: 0.8rem;
++}
++
++/* ===== Журнал на грешките ===== */
++.log-details summary {
++  cursor: pointer;
++  color: var(--gt-accent-2);
++}
++
++.log-details pre {
++  margin: 0.5rem 0 0;
++  max-height: 14rem;
++  overflow: auto;
++  white-space: pre-wrap;
++  color: var(--gt-muted);
++  font-size: 0.75rem;
++}
++
++/* ===== Справки ===== */
++.chart-box {
++  position: relative;
++  height: 300px;
++}
+diff --git a/README.md b/README.md
+index f22985b..fd1774d 100644
+--- a/README.md
++++ b/README.md
+@@ -20,6 +20,16 @@
+ - Създаване на отбори, турнири и мачове
+ - Одобряване и отхвърляне на заявки за играчи и за треньори
+ - Въвеждане на резултат от мач и отмяна на предстоящ мач
++- **Статистики** (`/Reports`): графики на изиграните мачове по месеци, най-играните игри и заявките по месеци, плюс класиране на избран турнир. Експорт на справката в **PDF** (QuestPDF) и **Excel** (ClosedXML)
++- **Генериране на мачове** за турнир "всеки срещу всеки" с бутон в списъка с турнирите. Върви в една транзакция - при конфликт не остава наполовина записана програма
++- **Журнал на грешките** (`/ErrorLogs`): всяка необработена грешка с код, заявка, потребител и stack trace
++
++### Надеждност
++- Одобряването на играч и на треньор, и генерирането на мачове са в явни **EF Core транзакции** (`BeginTransactionAsync`, `Commit` / `Rollback`)
++- Глобален `ExceptionHandlingMiddleware`: хваща необработените грешки, записва ги и показва страница 500 с код на грешката
++- Потребителски страници за **404**, **403** и **500**
++- Логване с **Serilog** във файл `GamingTournament/logs/log-ГГГГММДД.txt` (нов файл всеки ден, пазят се последните 14) и в таблицата `ErrorLogs`
++- За да видиш страницата 500 при разработка, отвори `/Home/Crash` (работи само в Development)
+ 
+ ## Технологии
+ 
+@@ -28,6 +38,7 @@
+ - ASP.NET Core Identity (потребители и роли)
+ - Entity Framework Core 9 със SQL Server
+ - Bootstrap 5 с тъмна гейминг тема
++- Serilog (логове), QuestPDF (PDF), ClosedXML (Excel), Chart.js (графики)
+ 
+ ## Структура на проекта
+ 

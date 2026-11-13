@@ -40,6 +40,15 @@
                     <li class="nav-item">
                         <a class="nav-link @ActiveClass("Tournaments")" asp-area="" asp-controller="Tournaments" asp-action="Index">Турнири</a>
                     </li>
+                    @if (User.IsInRole("Admin"))
+                    {
+                        <li class="nav-item">
+                            <a class="nav-link @ActiveClass("Reports")" asp-area="" asp-controller="Reports" asp-action="Index">Статистики</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link @ActiveClass("ErrorLogs")" asp-area="" asp-controller="ErrorLogs" asp-action="Index">Журнал</a>
+                        </li>
+                    }
                 </ul>
                 <partial name="_LoginPartial"/>
             </div>

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using GamingTournament.Data;
+using GamingTournament.Middleware;
 using GamingTournament.Models;
 
 namespace GamingTournament.Controllers;
@@ -69,9 +70,66 @@ public class HomeController : Controller
         return View();
     }
 
+    // 500 / 409: ExceptionHandlingMiddleware re-runs the request
+    // here and leaves the prepared model in HttpContext.Items
     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
     public IActionResult Error()
     {
-        return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
+        ErrorViewModel model =
+            HttpContext.Items[ExceptionHandlingMiddleware.ErrorItemKey]
+                as ErrorViewModel
+            ?? new ErrorViewModel
+            {
+                RequestId = HttpContext.TraceIdentifier
+            };
+
+        Response.StatusCode = model.StatusCode;
+
+        return View(model);
+    }
+
+    // 404, 403 and the rest: UseStatusCodePagesWithReExecute
+    // sends them here (named HttpStatus, because Controller
+    // already has a method called StatusCode)
+    [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
+    public IActionResult HttpStatus(int code)
+    {
+        Response.StatusCode = code;
+
+        ErrorViewModel model = new ErrorViewModel
+        {
+            RequestId = HttpContext.TraceIdentifier,
+            StatusCode = code
+        };
+
+        switch (code)
+        {
+            case 404:
+                return View("NotFound", model);
+
+            case 403:
+                return View("Forbidden", model);
+
+            default:
+                model.Title = "Грешка " + code;
+                model.Message =
+                    "Заявката не можа да бъде обработена.";
+
+                return View("Error", model);
+        }
+    }
+
+    // Development only: lets you see the 500 page on demand
+    // (in Production the route simply doesn't exist -> 404)
+    public IActionResult Crash(
+        [FromServices] IHostEnvironment environment)
+    {
+        if (!environment.IsDevelopment())
+        {
+            return NotFound();
+        }
+
+        throw new InvalidOperationException(
+            "Тестова грешка от /Home/Crash.");
     }
 }

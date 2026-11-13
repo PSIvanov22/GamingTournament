@@ -1,0 +1,28 @@
+@model ErrorViewModel
+@{
+    ViewData["Title"] = "Страницата не е намерена";
+}
+
+<section class="error-page">
+    <div class="error-code">404</div>
+
+    <h1>Страницата не е намерена</h1>
+
+    <p class="lead">
+        Този адрес не съществува или записът вече е изтрит.
+    </p>
+
+    <div class="d-flex justify-content-center flex-wrap gap-2 mt-4">
+        <a asp-controller="Home"
+           asp-action="Index"
+           class="btn btn-primary">
+            Към началото
+        </a>
+
+        <a asp-controller="Matches"
+           asp-action="Index"
+           class="btn btn-outline-primary">
+            Всички мачове
+        </a>
+    </div>
+</section>

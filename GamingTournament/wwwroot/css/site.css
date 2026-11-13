@@ -327,3 +327,65 @@ h1, h2, h3, h4, h5 {
 .site-footer a:hover {
   color: var(--gt-accent-2);
 }
+
+/* ===== Страници за грешки (404 / 403 / 500) ===== */
+.error-page {
+  text-align: center;
+  padding: 3.5rem 1rem 2rem;
+}
+
+.error-code {
+  font-size: clamp(4.5rem, 16vw, 8rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  background: linear-gradient(90deg, var(--gt-accent), var(--gt-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.error-code-danger {
+  background: linear-gradient(90deg, var(--gt-danger), var(--gt-warning));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.error-details {
+  max-width: 900px;
+  margin-inline: auto;
+  background: var(--gt-surface);
+  border: 1px solid var(--gt-border);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+.error-details pre {
+  margin: 0.75rem 0 0;
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--gt-muted);
+  font-size: 0.8rem;
+}
+
+/* ===== Журнал на грешките ===== */
+.log-details summary {
+  cursor: pointer;
+  color: var(--gt-accent-2);
+}
+
+.log-details pre {
+  margin: 0.5rem 0 0;
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--gt-muted);
+  font-size: 0.75rem;
+}
+
+/* ===== Справки ===== */
+.chart-box {
+  position: relative;
+  height: 300px;
+}

@@ -31,6 +31,8 @@ public class ApplicationDbContext
 
     public DbSet<Tournament> Tournaments { get; set; } = null!;
 
+    public DbSet<ErrorLog> ErrorLogs { get; set; } = null!;
+
     protected override void OnModelCreating(
         ModelBuilder builder)
     {
@@ -160,6 +162,10 @@ public class ApplicationDbContext
                 "CK_Teams_FoundedYear",
                 "[FoundedYear] IS NULL OR " +
                 "[FoundedYear] BETWEEN 1990 AND 2100"));
+
+        // Error journal: newest first on the admin page
+        builder.Entity<ErrorLog>()
+            .HasIndex(log => log.CreatedOn);
 
         // Requests: the status strings the controllers use
         builder.Entity<TeamJoinRequest>()

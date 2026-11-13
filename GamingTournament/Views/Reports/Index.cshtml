@@ -1,0 +1,303 @@
+@model GamingTournament.Models.ReportData
+
+@{
+    ViewData["Title"] = "Статистики";
+
+    int? selectedId = Model.SelectedTournament?.Id;
+}
+
+<h1 class="page-title">Статистики и справки</h1>
+
+@* tournament picker + export buttons *@
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <form method="get"
+          asp-controller="Reports"
+          asp-action="Index"
+          class="d-flex align-items-end gap-2">
+        <div>
+            <label for="tournamentId" class="form-label mb-1">
+                Турнир (класиране и мачове)
+            </label>
+
+            <select id="tournamentId"
+                    name="tournamentId"
+                    class="form-select"
+                    disabled="@(Model.Tournaments.Count == 0)">
+                @foreach (var tournament in Model.Tournaments)
+                {
+                    <option value="@tournament.Id"
+                            selected="@(tournament.Id == selectedId)">
+                        @tournament.Name
+                    </option>
+                }
+            </select>
+        </div>
+
+        <button type="submit"
+                class="btn btn-outline-primary"
+                disabled="@(Model.Tournaments.Count == 0)">
+            Покажи
+        </button>
+    </form>
+
+    <div class="d-flex gap-2">
+        <a asp-controller="Reports"
+           asp-action="ExportPdf"
+           asp-route-tournamentId="@selectedId"
+           class="btn btn-danger">
+            Изтегли PDF
+        </a>
+
+        <a asp-controller="Reports"
+           asp-action="ExportExcel"
+           asp-route-tournamentId="@selectedId"
+           class="btn btn-success">
+            Изтегли Excel
+        </a>
+    </div>
+</div>
+
+@* key numbers *@
+<div class="row text-center mb-4">
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card stat-card h-100">
+            <div class="card-body py-4">
+                <div class="stat-number">@Model.TeamCount</div>
+                <div class="stat-label">Отбори</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card stat-card h-100">
+            <div class="card-body py-4">
+                <div class="stat-number">@Model.TournamentCount</div>
+                <div class="stat-label">Турнири</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card stat-card h-100">
+            <div class="card-body py-4">
+                <div class="stat-number">@Model.FinishedMatchCount</div>
+                <div class="stat-label">Изиграни мача</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-3 mb-3">
+        <div class="card stat-card h-100">
+            <div class="card-body py-4">
+                <div class="stat-number">@Model.ScheduledMatchCount</div>
+                <div class="stat-label">Предстоящи мача</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* charts *@
+<div class="row g-3 mb-4">
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-body">
+                <h2 class="h5 mb-3">Изиграни мачове по месеци</h2>
+
+                @if (Model.MatchesByMonth.Count == 0)
+                {
+                    <p class="text-muted mb-0">Още няма изиграни мачове.</p>
+                }
+                else
+                {
+                    <div class="chart-box">
+                        <canvas id="matchesByMonth"></canvas>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-body">
+                <h2 class="h5 mb-3">Най-играни игри</h2>
+
+                @if (Model.Games.Count == 0)
+                {
+                    <p class="text-muted mb-0">Още няма турнири.</p>
+                }
+                else
+                {
+                    <div class="chart-box">
+                        <canvas id="games"></canvas>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5 mb-3">Заявки по месеци (играчи и треньори)</h2>
+
+                @if (Model.RequestsByMonth.Count == 0)
+                {
+                    <p class="text-muted mb-0">Още няма заявки.</p>
+                }
+                else
+                {
+                    <div class="chart-box">
+                        <canvas id="requests"></canvas>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@* standings of the selected tournament *@
+<h2 class="h4 mb-3">
+    Класиране
+    @if (Model.SelectedTournament != null)
+    {
+        <span class="text-muted">- @Model.SelectedTournament.Name</span>
+    }
+</h2>
+
+@if (Model.Standings.Count == 0)
+{
+    <div class="alert alert-info">
+        Няма данни за класиране - турнирът още няма мачове.
+    </div>
+}
+else
+{
+    <div class="table-card table-responsive mb-4">
+        <table class="table table-hover align-middle">
+            <thead>
+            <tr>
+                <th>#</th>
+                <th>Отбор</th>
+                <th class="text-center">М</th>
+                <th class="text-center">П</th>
+                <th class="text-center">Р</th>
+                <th class="text-center">З</th>
+                <th class="text-center">Голове</th>
+                <th class="text-center">Точки</th>
+            </tr>
+            </thead>
+
+            <tbody>
+            @{
+                int place = 1;
+            }
+
+            @foreach (var row in Model.Standings)
+            {
+                <tr>
+                    <td>@(place++)</td>
+                    <td><strong>@row.TeamName</strong></td>
+                    <td class="text-center">@row.Played</td>
+                    <td class="text-center">@row.Wins</td>
+                    <td class="text-center">@row.Draws</td>
+                    <td class="text-center">@row.Losses</td>
+                    <td class="text-center">@row.GoalsFor:@row.GoalsAgainst</td>
+                    <td class="text-center"><strong>@row.Points</strong></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <p class="text-muted small">
+        М - мачове, П - победи, Р - равенства, З - загуби.
+        Победа = @GamingTournament.Models.StandingRow.WinPoints точки,
+        равенство = @GamingTournament.Models.StandingRow.DrawPoints точка.
+    </p>
+}
+
+@section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+    <script>
+        // the data comes from the server (ReportData); Json.Serialize
+        // escapes it, so a game name can't break out of the script
+        const monthLabels = @Json.Serialize(Model.MatchesByMonth.Select(item => item.Label));
+        const monthValues = @Json.Serialize(Model.MatchesByMonth.Select(item => item.Count));
+
+        const gameLabels = @Json.Serialize(Model.Games.Select(item => item.Game));
+        const gameValues = @Json.Serialize(Model.Games.Select(item => item.Matches));
+
+        const requestLabels = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Label));
+        const requestApproved = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Approved));
+        const requestRejected = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Rejected));
+        const requestPending = @Json.Serialize(Model.RequestsByMonth.Select(item => item.Pending));
+
+        // colours of the dark theme (site.css)
+        Chart.defaults.color = '#8d97b5';
+        Chart.defaults.borderColor = '#263152';
+
+        const palette = ['#7c5cff', '#22d3ee', '#22c55e', '#f59e0b', '#ef4444', '#ec4899'];
+
+        function draw(id, config) {
+            const canvas = document.getElementById(id);
+
+            // no canvas = the page shows a "no data" text instead
+            if (canvas) {
+                new Chart(canvas, config);
+            }
+        }
+
+        draw('matchesByMonth', {
+            type: 'bar',
+            data: {
+                labels: monthLabels,
+                datasets: [{
+                    label: 'Изиграни мачове',
+                    data: monthValues,
+                    backgroundColor: '#7c5cff',
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+            }
+        });
+
+        draw('games', {
+            type: 'doughnut',
+            data: {
+                labels: gameLabels,
+                datasets: [{
+                    label: 'Мачове',
+                    data: gameValues,
+                    backgroundColor: palette,
+                    borderColor: '#131a2b'
+                }]
+            },
+            options: { maintainAspectRatio: false }
+        });
+
+        draw('requests', {
+            type: 'bar',
+            data: {
+                labels: requestLabels,
+                datasets: [
+                    { label: 'Одобрени', data: requestApproved, backgroundColor: '#22c55e' },
+                    { label: 'Отхвърлени', data: requestRejected, backgroundColor: '#ef4444' },
+                    { label: 'Чакащи', data: requestPending, backgroundColor: '#f59e0b' }
+                ]
+            },
+            options: {
+                maintainAspectRatio: false,
+                scales: {
+                    x: { stacked: true },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+                }
+            }
+        });
+    </script>
+}

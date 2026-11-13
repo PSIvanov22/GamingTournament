@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace GamingTournament.Controllers;
 
@@ -14,12 +15,16 @@ public class TeamsController : Controller
     private readonly UserManager<ApplicationUser>
         _userManager;
 
+    private readonly ILogger<TeamsController> _logger;
+
     public TeamsController(
         ApplicationDbContext context,
-        UserManager<ApplicationUser> userManager)
+        UserManager<ApplicationUser> userManager,
+        ILogger<TeamsController> logger)
     {
         _context = context;
         _userManager = userManager;
+        _logger = logger;
     }
 
     [AllowAnonymous]
@@ -301,25 +306,53 @@ public class TeamsController : Controller
             );
         }
 
-        request.Player.TeamId = request.TeamId;
-        request.Status = "Approved";
+        // Транзакция: двете записа вървят заедно - или играчът е в
+        // отбора И другите му заявки са отхвърлени, или нищо не се
+        // променя. Без нея срив между тях оставя играч в отбора
+        // с все още "чакащи" заявки към други отбори
+        await using IDbContextTransaction transaction =
+            await _context.Database.BeginTransactionAsync();
 
-        List<TeamJoinRequest> otherRequests =
-            await _context.TeamJoinRequests
-                .Where(item =>
-                    item.PlayerId ==
-                    request.PlayerId &&
-                    item.Id != request.Id &&
-                    item.Status == "Pending")
-                .ToListAsync();
-
-        foreach (TeamJoinRequest otherRequest
-                 in otherRequests)
+        try
         {
-            otherRequest.Status = "Rejected";
+            request.Player.TeamId = request.TeamId;
+            request.Status = "Approved";
+
+            await _context.SaveChangesAsync();
+
+            List<TeamJoinRequest> otherRequests =
+                await _context.TeamJoinRequests
+                    .Where(item =>
+                        item.PlayerId ==
+                        request.PlayerId &&
+                        item.Id != request.Id &&
+                        item.Status == "Pending")
+                    .ToListAsync();
+
+            foreach (TeamJoinRequest otherRequest
+                     in otherRequests)
+            {
+                otherRequest.Status = "Rejected";
+            }
+
+            await _context.SaveChangesAsync();
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            // връща и първия запис; грешката отива към
+            // ExceptionHandlingMiddleware (лог + страница 500)
+            await transaction.RollbackAsync();
+
+            throw;
         }
 
-        await _context.SaveChangesAsync();
+        _logger.LogInformation(
+            "Заявка {RequestId} одобрена: играч {PlayerId} е в отбор {TeamId}",
+            request.Id,
+            request.PlayerId,
+            request.TeamId);
 
         TempData["SuccessMessage"] =
             "Играчът беше добавен към отбора.";
@@ -512,41 +545,65 @@ public class TeamsController : Controller
             );
         }
 
-        request.Team.CoachId = request.PlayerId;
-        request.Status = "Approved";
+        // Транзакция: назначаването на треньора и отхвърлянето на
+        // всички останали заявки са една операция - всичко или нищо
+        await using IDbContextTransaction transaction =
+            await _context.Database.BeginTransactionAsync();
 
-        // Другите чакащи заявки за треньор на този
-        // потребител и към този отбор вече са невалидни
-        List<CoachRequest> otherCoachRequests =
-            await _context.CoachRequests
-                .Where(item =>
-                    item.Id != request.Id &&
-                    item.Status == "Pending" &&
-                    (item.PlayerId == request.PlayerId ||
-                     item.TeamId == request.TeamId))
-                .ToListAsync();
-
-        foreach (CoachRequest otherRequest
-                 in otherCoachRequests)
+        try
         {
-            otherRequest.Status = "Rejected";
+            request.Team.CoachId = request.PlayerId;
+            request.Status = "Approved";
+
+            await _context.SaveChangesAsync();
+
+            // Другите чакащи заявки за треньор на този
+            // потребител и към този отбор вече са невалидни
+            List<CoachRequest> otherCoachRequests =
+                await _context.CoachRequests
+                    .Where(item =>
+                        item.Id != request.Id &&
+                        item.Status == "Pending" &&
+                        (item.PlayerId == request.PlayerId ||
+                         item.TeamId == request.TeamId))
+                    .ToListAsync();
+
+            foreach (CoachRequest otherRequest
+                     in otherCoachRequests)
+            {
+                otherRequest.Status = "Rejected";
+            }
+
+            // Треньорът не може да стане играч
+            List<TeamJoinRequest> joinRequests =
+                await _context.TeamJoinRequests
+                    .Where(item =>
+                        item.PlayerId == request.PlayerId &&
+                        item.Status == "Pending")
+                    .ToListAsync();
+
+            foreach (TeamJoinRequest joinRequest
+                     in joinRequests)
+            {
+                joinRequest.Status = "Rejected";
+            }
+
+            await _context.SaveChangesAsync();
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+
+            throw;
         }
 
-        // Треньорът не може да стане играч
-        List<TeamJoinRequest> joinRequests =
-            await _context.TeamJoinRequests
-                .Where(item =>
-                    item.PlayerId == request.PlayerId &&
-                    item.Status == "Pending")
-                .ToListAsync();
-
-        foreach (TeamJoinRequest joinRequest
-                 in joinRequests)
-        {
-            joinRequest.Status = "Rejected";
-        }
-
-        await _context.SaveChangesAsync();
+        _logger.LogInformation(
+            "Заявка за треньор {RequestId} одобрена: {PlayerId} води отбор {TeamId}",
+            request.Id,
+            request.PlayerId,
+            request.TeamId);
 
         TempData["SuccessMessage"] =
             "Треньорът беше одобрен.";

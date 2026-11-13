@@ -1,9 +1,35 @@
 using GamingTournament.Data;
+using GamingTournament.Middleware;
 using GamingTournament.Models;
+using GamingTournament.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Логване: конзола + файл logs/log-ГГГГММДД.txt (нов файл всеки ден,
+// пази се последните 14). Всичко от Microsoft под Warning се скрива,
+// иначе всяка SQL заявка влиза в лога
+builder.Host.UseSerilog((hostContext, configuration) =>
+{
+    configuration
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .WriteTo.Console()
+        .WriteTo.File(
+            Path.Combine(
+                hostContext.HostingEnvironment.ContentRootPath,
+                "logs",
+                "log-.txt"),
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 14,
+            outputTemplate:
+            "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] " +
+            "{Message:lj}{NewLine}{Exception}");
+});
 
 var connectionString =
     builder.Configuration.GetConnectionString(
@@ -31,6 +57,9 @@ builder.Services
 
 builder.Services.AddControllersWithViews();
 
+// Справки (Задание 7)
+builder.Services.AddScoped<IReportService, ReportService>();
+
 var app = builder.Build();
 
 using (IServiceScope scope = app.Services.CreateScope())
@@ -45,6 +74,10 @@ using (IServiceScope scope = app.Services.CreateScope())
         >();
 
     await context.Database.EnsureCreatedAsync();
+
+    // EnsureCreated не добавя нови таблици към вече съществуваща
+    // база, затова журналът на грешките се създава отделно
+    await DatabaseUpgrades.EnsureErrorLogsTableAsync(context);
 
     RoleManager<IdentityRole> roleManager =
         services.GetRequiredService<
@@ -127,9 +160,15 @@ using (IServiceScope scope = app.Services.CreateScope())
     await SeedData.SeedAsync(context, userManager);
 }
 
+// Първият middleware: хваща всяка необработена грешка, записва я във
+// файла и в базата и показва страница 500 вместо stack trace
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+// 404, 403 и т.н. без тяло -> /Home/HttpStatus?code=404
+app.UseStatusCodePagesWithReExecute("/Home/HttpStatus", "?code={0}");
+
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Home/Error");
     app.UseHsts();
 }
 

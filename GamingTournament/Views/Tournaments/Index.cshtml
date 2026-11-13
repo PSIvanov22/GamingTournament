@@ -14,6 +14,13 @@
     </div>
 }
 
+@if (TempData["ErrorMessage"] != null)
+{
+    <div class="alert alert-danger">
+        @TempData["ErrorMessage"]
+    </div>
+}
+
 @if (User.IsInRole("Admin"))
 {
     <p>
@@ -42,6 +49,10 @@ else
             <th>Период</th>
             <th>Мачове</th>
             <th>Статус</th>
+            @if (User.IsInRole("Admin"))
+            {
+                <th>Действия</th>
+            }
         </tr>
         </thead>
 
@@ -81,6 +92,26 @@ else
                         <span class="badge bg-success">Тече</span>
                     }
                 </td>
+
+                @if (User.IsInRole("Admin"))
+                {
+                    <td>
+                        @* only for a tournament without matches yet *@
+                        @if (tournament.Matches.Count == 0)
+                        {
+                            <form asp-controller="Tournaments"
+                                  asp-action="GenerateMatches"
+                                  asp-route-id="@tournament.Id"
+                                  method="post"
+                                  onsubmit="return confirm('Да генерирам ли програма за всички отбори?');">
+                                <button type="submit"
+                                        class="btn btn-success btn-sm">
+                                    Генерирай мачове
+                                </button>
+                            </form>
+                        }
+                    </td>
+                }
             </tr>
         }
         </tbody>
